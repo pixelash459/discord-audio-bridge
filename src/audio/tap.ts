@@ -8,6 +8,7 @@ import { config, DISCORD_AUDIO } from '../config.ts';
 import { logger } from '../logger.ts';
 
 const log = logger('tap');
+const captureChildren = new Set<ChildProcessWithoutNullStreams>();
 
 export interface RawFormat {
   sampleRate: number;
@@ -73,12 +74,17 @@ function run(args: string[], timeoutMs = 15_000): Promise<string> {
   if (!isAudioTapBuilt()) return Promise.reject(new AudioTapUnavailableError());
 
   return new Promise((resolve, reject) => {
+    const started = performance.now();
+    log.debug('running AudioTap command', { args });
     const child = spawn(config.paths.audioTap, args, { windowsHide: true });
+    captureChildren.add(child);
+    child.once('close', () => captureChildren.delete(child));
     let stdout = '';
     let stderr = '';
 
     const timer = setTimeout(() => {
       child.kill();
+      log.warn('AudioTap command timed out', { args, timeoutMs });
       reject(new Error(`AudioTap ${args.join(' ')} timed out after ${timeoutMs}ms`));
     }, timeoutMs);
 
@@ -89,15 +95,42 @@ function run(args: string[], timeoutMs = 15_000): Promise<string> {
 
     child.on('error', (error) => {
       clearTimeout(timer);
+      log.error('AudioTap command failed to start', { args, error });
       reject(error);
     });
 
     child.on('close', (code) => {
       clearTimeout(timer);
-      if (code === 0) resolve(stdout);
-      else reject(new Error(`AudioTap exited ${code}: ${stderr.trim() || '(no output)'}`));
+      const details = { args, code, durationMs: Math.round(performance.now() - started) };
+      if (code === 0) {
+        log.debug('AudioTap command completed', details);
+        resolve(stdout);
+      } else {
+        log.warn('AudioTap command exited unsuccessfully', details);
+        reject(new Error(`AudioTap exited ${code}: ${stderr.trim() || '(no output)'}`));
+      }
     });
   });
+}
+
+/** Final shutdown backstop for any capture child that lost its owning session reference. */
+export async function closeAllTaps(): Promise<void> {
+  const children = [...captureChildren];
+  if (children.length === 0) return;
+  log.warn('cleaning up remaining AudioTap processes', { count: children.length });
+  await Promise.all(
+    children.map(async (child) => {
+      try {
+        child.stdin.write('quit\n');
+        child.stdin.end();
+      } catch {
+        /* already exiting */
+      }
+      if (child.exitCode !== null) return;
+      await Promise.race([once(child, 'close'), new Promise((resolve) => setTimeout(resolve, 1_000))]);
+      if (child.exitCode === null) child.kill();
+    }),
+  );
 }
 
 export async function listProcesses(): Promise<ProcessInfo[]> {
@@ -130,11 +163,18 @@ export class Tap {
   #child: ChildProcessWithoutNullStreams;
   #stats: TapStats | null = null;
   #closed = false;
+  #exited: Promise<void>;
 
   private constructor(child: ChildProcessWithoutNullStreams, format: RawFormat) {
     this.#child = child;
     this.format = format;
     this.stream = child.stdout;
+    this.#exited =
+      child.exitCode !== null
+        ? Promise.resolve()
+        : once(child, 'close').then(([code, signal]) => {
+            log.info('AudioTap capture exited', { pid: child.pid, code, signal });
+          });
   }
 
   static async start(options: TapOptions): Promise<Tap> {
@@ -154,6 +194,7 @@ export class Tap {
 
     log.debug('spawning AudioTap', { args });
     const child = spawn(config.paths.audioTap, args, { windowsHide: true });
+    log.debug('AudioTap process spawned', { pid: child.pid });
 
     // stdout is binary PCM, so every diagnostic comes back on stderr as one JSON object per line.
     const events = createInterface({ input: child.stderr });
@@ -191,14 +232,17 @@ export class Tap {
     // Resolve once the tap reports its negotiated format, which happens before any PCM flows.
     const started = new Promise<RawFormat>((resolve, reject) => {
       rejectStart = reject;
+      let timer: NodeJS.Timeout;
       const check = setInterval(() => {
         if (format) {
           clearInterval(check);
+          clearTimeout(timer);
           resolve(format);
         }
       }, 10);
-      const timer = setTimeout(() => {
+      timer = setTimeout(() => {
         clearInterval(check);
+        child.kill();
         reject(new Error('AudioTap did not report a capture format within 10s'));
       }, 10_000);
       child.once('close', (code) => {
@@ -213,9 +257,17 @@ export class Tap {
       });
     });
 
-    const negotiated = await started;
+    let negotiated: RawFormat;
+    try {
+      negotiated = await started;
+    } catch (error) {
+      events.close();
+      if (child.exitCode === null) child.kill();
+      log.error('AudioTap capture failed during startup', error);
+      throw error;
+    }
     rejectStart = undefined;
-    log.info('capture started', negotiated);
+    log.info('capture started', { pid: child.pid, ...negotiated });
 
     tap = new Tap(child, negotiated);
     return tap;
@@ -227,12 +279,14 @@ export class Tap {
 
   setGain(db: number): void {
     if (this.#closed) return;
+    log.info('updating AudioTap gain', { pid: this.#child.pid, db });
     this.#child.stdin.write(`gain ${db}\n`);
   }
 
   async close(): Promise<void> {
     if (this.#closed) return;
     this.#closed = true;
+    log.debug('stopping AudioTap capture', { pid: this.#child.pid });
 
     // "quit" lets it stop the WASAPI client cleanly; the kill is only a backstop.
     try {
@@ -242,10 +296,9 @@ export class Tap {
       /* already gone */
     }
 
-    const exited = once(this.#child, 'close');
     const timer = setTimeout(() => this.#child.kill(), 2_000);
     try {
-      await exited;
+      await this.#exited;
     } finally {
       clearTimeout(timer);
     }

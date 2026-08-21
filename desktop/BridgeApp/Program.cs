@@ -54,8 +54,16 @@ internal static class Program
             return;
         }
 
+        AppLog.Initialize(projectRoot);
+        AppDomain.CurrentDomain.UnhandledException += (_, e) =>
+        {
+            if (e.ExceptionObject is Exception ex) AppLog.Error("unhandled desktop exception", ex);
+        };
+        Application.ThreadException += (_, e) => AppLog.Error("unhandled UI exception", e.Exception);
+
         // The bot is disposed after the message loop ends, which stops it only if we started it.
         using var bot = new BotProcess(projectRoot);
         Application.Run(new MainForm(bot));
+        AppLog.Info("desktop launcher stopped");
     }
 }

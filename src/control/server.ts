@@ -60,12 +60,14 @@ export class ControlServer {
     this.#http.on('upgrade', (req, socket, head) => {
       const { pathname } = new URL(req.url ?? '/', 'http://127.0.0.1');
       if (pathname !== '/ws') {
+        log.debug('rejected websocket upgrade for unknown path', { pathname });
         socket.write('HTTP/1.1 404 Not Found\r\n\r\n');
         socket.destroy();
         return;
       }
 
       if (!this.#authorized(req)) {
+        log.warn('rejected unauthorized websocket connection');
         socket.write('HTTP/1.1 401 Unauthorized\r\n\r\n');
         socket.destroy();
         return;
@@ -89,15 +91,18 @@ export class ControlServer {
     this.#timer = setInterval(() => void this.#broadcastState(), 500);
     this.#stopLogFeed = onLog((entry) => this.#send({ type: 'log', entry }));
 
-    log.info(`control panel on ${this.url}`);
+    // The access token belongs in the one explicit stdout URL, never in logs or log history.
+    log.info(`control panel listening on http://127.0.0.1:${this.port}`);
   }
 
   async stop(): Promise<void> {
+    log.info('stopping control panel', { clients: this.#clients.size });
     if (this.#timer) clearInterval(this.#timer);
     this.#stopLogFeed?.();
     for (const ws of this.#clients) ws.close();
     this.#wss.close();
     await new Promise<void>((done) => this.#http.close(() => done()));
+    log.info('control panel stopped');
   }
 
   #authorized(req: IncomingMessage): boolean {
@@ -114,8 +119,16 @@ export class ControlServer {
 
   #attach(ws: WebSocket): void {
     this.#clients.add(ws);
-    ws.on('close', () => this.#clients.delete(ws));
-    ws.on('error', () => this.#clients.delete(ws));
+    log.debug('control panel websocket connected', { clients: this.#clients.size });
+    let detached = false;
+    const detach = () => {
+      if (detached) return;
+      detached = true;
+      this.#clients.delete(ws);
+      log.debug('control panel websocket disconnected', { clients: this.#clients.size });
+    };
+    ws.once('close', detach);
+    ws.once('error', detach);
 
     // Seed the newcomer with history so the log pane is not empty on open.
     ws.send(JSON.stringify({ type: 'history', entries: recentLogs() }));
@@ -141,9 +154,15 @@ export class ControlServer {
 
   async #route(req: IncomingMessage, res: ServerResponse): Promise<void> {
     const url = new URL(req.url ?? '/', 'http://127.0.0.1');
+    const started = performance.now();
+    res.once('finish', () => {
+      const details = { status: res.statusCode, durationMs: Math.round(performance.now() - started) };
+      if (url.pathname.startsWith('/api/')) log.debug(`${req.method ?? 'GET'} ${url.pathname}`, details);
+    });
 
     if (url.pathname.startsWith('/api/')) {
       if (!this.#authorized(req)) {
+        log.warn(`rejected unauthorized API request: ${req.method ?? 'GET'} ${url.pathname}`);
         return json(res, 401, { error: 'Bad or missing control token.' });
       }
 

@@ -88,11 +88,13 @@ internal sealed class BotProcess : IDisposable
         var existing = await ProbeAsync(cancel);
         if (existing is not null)
         {
+            AppLog.Info("attached to existing bot", new { existing.Port });
             status.Report("Attached to a bot that was already running.");
             return existing;
         }
 
         status.Report("Starting the bot...");
+        AppLog.Info("starting bot process");
         Start();
 
         // The bot writes .control-token once its HTTP server is listening. Poll for that file and
@@ -116,7 +118,9 @@ internal sealed class BotProcess : IDisposable
             await Task.Delay(300, cancel);
         }
 
-        throw new TimeoutException("The bot did not open its control panel within 60 seconds.");
+        var timeout = new TimeoutException("The bot did not open its control panel within 60 seconds.");
+        AppLog.Error("bot startup timed out", timeout);
+        throw timeout;
     }
 
     /// <summary>Reads .control-token and checks whether anything is actually listening on it.</summary>
@@ -171,23 +175,27 @@ internal sealed class BotProcess : IDisposable
         // The panel shows the log itself, so the console copy would only be noise.
         info.Environment["FORCE_COLOR"] = "0";
 
-        child = new Process { StartInfo = info, EnableRaisingEvents = true };
-        child.OutputDataReceived += (_, e) => Report(e.Data);
-        child.ErrorDataReceived += (_, e) => Report(e.Data);
+        var process = new Process { StartInfo = info, EnableRaisingEvents = true };
+        process.Exited += (_, _) => AppLog.Info("bot process exited", new { process.ExitCode });
+        process.OutputDataReceived += (_, e) => Report(e.Data);
+        process.ErrorDataReceived += (_, e) => Report(e.Data);
+        child = process;
 
         try
         {
-            child.Start();
+            process.Start();
+            AppLog.Info("bot process spawned", new { process.Id });
         }
         catch (Exception ex)
         {
             child = null;
+            AppLog.Error("could not spawn bot process", ex);
             throw new InvalidOperationException(
                 "Could not start Node. Install Node.js 22.18 or newer and make sure `node` is on PATH.", ex);
         }
 
-        child.BeginOutputReadLine();
-        child.BeginErrorReadLine();
+        process.BeginOutputReadLine();
+        process.BeginErrorReadLine();
     }
 
     private void Report(string? line)
@@ -207,6 +215,7 @@ internal sealed class BotProcess : IDisposable
         {
             if (!child.HasExited)
             {
+                AppLog.Info("stopping owned bot process", new { child.Id });
                 // Kill the whole tree: the bot has AudioTap and ffmpeg children of its own.
                 child.Kill(entireProcessTree: true);
                 child.WaitForExit(4000);

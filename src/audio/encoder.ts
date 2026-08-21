@@ -8,6 +8,7 @@ import { logger } from '../logger.ts';
 import type { RawFormat } from './tap.ts';
 
 const log = logger('opus');
+const encoderChildren = new Set<ChildProcessWithoutNullStreams>();
 
 export interface DshowFormat {
   sampleRate: number;
@@ -129,11 +130,20 @@ export class OpusEncoder {
 
   #child: ChildProcessWithoutNullStreams;
   #closed = false;
+  #exited: Promise<void>;
 
   private constructor(child: ChildProcessWithoutNullStreams, args: string[]) {
     this.#child = child;
     this.args = args;
     this.stream = child.stdout;
+    this.#exited =
+      child.exitCode !== null
+        ? Promise.resolve()
+        : once(child, 'close').then(([code, signal]) => {
+            const details = { pid: child.pid, code, signal };
+            if (this.#closed || code === 0) log.info('ffmpeg exited', details);
+            else log.warn('ffmpeg exited unexpectedly', details);
+          });
   }
 
   static start(options: EncoderOptions, pcm?: Readable): OpusEncoder {
@@ -141,6 +151,9 @@ export class OpusEncoder {
     log.debug('spawning ffmpeg', { args });
 
     const child = spawn(config.paths.ffmpeg, args, { windowsHide: true });
+    encoderChildren.add(child);
+    child.once('close', () => encoderChildren.delete(child));
+    log.debug('ffmpeg process spawned', { pid: child.pid });
 
     const lines = createInterface({ input: child.stderr });
     lines.on('line', (line) => {
@@ -166,12 +179,12 @@ export class OpusEncoder {
   async close(): Promise<void> {
     if (this.#closed) return;
     this.#closed = true;
+    log.debug('stopping ffmpeg', { pid: this.#child.pid });
 
-    const exited = once(this.#child, 'close');
-    this.#child.kill('SIGTERM');
+    if (this.#child.exitCode === null) this.#child.kill('SIGTERM');
     const timer = setTimeout(() => this.#child.kill('SIGKILL'), 2_000);
     try {
-      await exited;
+      await this.#exited;
     } catch {
       /* already gone */
     } finally {
@@ -193,6 +206,8 @@ export class OpusEncoder {
  */
 export async function probeDshowFormat(name: string): Promise<DshowFormat | null> {
   const args = ['-hide_banner', '-f', 'dshow', '-list_options', 'true', '-i', `audio=${name}`];
+  const started = performance.now();
+  log.debug('probing DirectShow format', { name });
   const child = spawn(config.paths.ffmpeg, args, { windowsHide: true });
 
   let stderr = '';
@@ -214,10 +229,20 @@ export async function probeDshowFormat(name: string): Promise<DshowFormat | null
     }
   }
 
-  if (options.length === 0) return null;
+  if (options.length === 0) {
+    log.warn('DirectShow device reported no usable formats', { name });
+    return null;
+  }
 
   options.sort((a, b) => score(b) - score(a));
-  return options[0]!;
+  const selected = options[0]!;
+  log.debug('DirectShow format probe completed', {
+    name,
+    selected,
+    options: options.length,
+    durationMs: Math.round(performance.now() - started),
+  });
+  return selected;
 }
 
 /**
@@ -248,6 +273,7 @@ function score(format: DshowFormat): number {
 export async function listDshowDevices(): Promise<DshowDevice[]> {
   const args = ['-hide_banner', '-list_devices', 'true', '-f', 'dshow', '-i', 'dummy'];
   const child = spawn(config.paths.ffmpeg, args, { windowsHide: true });
+  const started = performance.now();
 
   let stderr = '';
   child.stderr.setEncoding('utf8');
@@ -270,5 +296,24 @@ export async function listDshowDevices(): Promise<DshowDevice[]> {
     if (alternative && current) current.alternativeName = alternative[1];
   }
 
+  log.debug('DirectShow devices enumerated', {
+    count: devices.length,
+    durationMs: Math.round(performance.now() - started),
+  });
   return devices;
+}
+
+/** Final shutdown backstop for an encoder orphaned by an unexpected pipeline failure. */
+export async function closeAllEncoders(): Promise<void> {
+  const children = [...encoderChildren];
+  if (children.length === 0) return;
+  log.warn('cleaning up remaining ffmpeg processes', { count: children.length });
+  for (const child of children) if (child.exitCode === null) child.kill('SIGTERM');
+  await Promise.all(
+    children.map(async (child) => {
+      if (child.exitCode !== null) return;
+      await Promise.race([once(child, 'close'), new Promise((resolve) => setTimeout(resolve, 2_000))]);
+      if (child.exitCode === null) child.kill('SIGKILL');
+    }),
+  );
 }

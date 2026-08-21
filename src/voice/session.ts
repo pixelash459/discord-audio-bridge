@@ -31,6 +31,9 @@ export interface SessionStatus {
   channelName: string;
   source: SourceSpec;
   bitrate: number;
+  bitrateCeiling: number;
+  gainDb: number;
+  muted: boolean;
   vbr: string;
   complexity: number;
   captureFormat: string;
@@ -80,10 +83,13 @@ export class BridgeSession {
   readonly channelName: string;
 
   #connection: VoiceConnection;
+  #channel: VoiceBasedChannel;
   #player: AudioPlayer;
   #source: SourceSpec;
   #bitrate: number;
   #gainDb: number;
+  #muted = false;
+  #mutation: Promise<void> = Promise.resolve();
 
   #tap: Tap | null = null;
   #encoder: OpusEncoder | null = null;
@@ -92,12 +98,14 @@ export class BridgeSession {
   #startedAt = Date.now();
   #restarts = 0;
   #restarting = false;
+  #changingAudio = false;
   #destroyed = false;
 
   private constructor(channel: VoiceBasedChannel, connection: VoiceConnection, source: SourceSpec, bitrate: number, gainDb: number) {
     this.guildId = channel.guild.id;
     this.channelId = channel.id;
     this.channelName = channel.name;
+    this.#channel = channel;
     this.#connection = connection;
     this.#source = source;
     this.#bitrate = bitrate;
@@ -123,6 +131,14 @@ export class BridgeSession {
     source: SourceSpec,
     options: { bitrate: number; gainDb?: number },
   ): Promise<BridgeSession> {
+    const started = performance.now();
+    log.info('joining voice channel', {
+      guild: channel.guild.id,
+      channel: channel.id,
+      channelName: channel.name,
+      sourceKind: source.kind,
+      bitrate: options.bitrate,
+    });
     const connection = joinVoiceChannel({
       channelId: channel.id,
       guildId: channel.guild.id,
@@ -142,6 +158,11 @@ export class BridgeSession {
       );
     }
 
+    log.info('voice connection ready', {
+      guild: channel.guild.id,
+      channel: channel.id,
+      durationMs: Math.round(performance.now() - started),
+    });
     const session = new BridgeSession(channel, connection, source, options.bitrate, options.gainDb ?? 0);
     await session.#startAudio();
     return session;
@@ -155,19 +176,50 @@ export class BridgeSession {
     return this.#bitrate;
   }
 
+  get bitrateCeiling(): number {
+    return Math.min(this.#channel.bitrate, this.#channel.guild.maximumBitrate);
+  }
+
+  get muted(): boolean {
+    return this.#muted;
+  }
+
+  #mutate<T>(operation: () => Promise<T>): Promise<T> {
+    const next = this.#mutation.then(operation, operation);
+    this.#mutation = next.then(
+      () => undefined,
+      () => undefined,
+    );
+    return next;
+  }
+
   /** Rebuilds the audio pipeline against a new source without leaving the channel. */
   async setSource(source: SourceSpec): Promise<void> {
-    this.#source = source;
-    this.#restarts = 0;
-    await this.#stopAudio();
-    await this.#startAudio();
+    return this.#mutate(async () => {
+      log.info('retargeting stream source', {
+        guild: this.guildId,
+        from: this.#source.kind,
+        to: source.kind,
+        label: source.label,
+      });
+      this.#source = source;
+      this.#restarts = 0;
+      await this.#replaceAudio();
+    });
   }
 
   /** Re-encodes at a new bitrate. Requires an encoder restart; the connection is untouched. */
   async setBitrate(bitrate: number): Promise<void> {
-    this.#bitrate = bitrate;
-    await this.#stopAudio();
-    await this.#startAudio();
+    return this.#mutate(async () => {
+      const target = Math.min(this.bitrateCeiling, Math.max(8_000, Math.round(bitrate)));
+      if (target === this.#bitrate) {
+        log.debug('encoder bitrate is already at target', { guild: this.guildId, bitrate: target });
+        return;
+      }
+      log.info('changing encoder bitrate', { guild: this.guildId, from: this.#bitrate, to: target });
+      this.#bitrate = target;
+      await this.#replaceAudio();
+    });
   }
 
   /**
@@ -175,13 +227,42 @@ export class BridgeSession {
    * free. dshow sources have no tap, so they need a full restart to change the ffmpeg filter.
    */
   async setGain(db: number): Promise<void> {
-    this.#gainDb = db;
-    if (this.#tap) {
-      this.#tap.setGain(db);
-      return;
-    }
-    await this.#stopAudio();
-    await this.#startAudio();
+    return this.#mutate(async () => {
+      if (db === this.#gainDb) {
+        log.debug('capture gain is already at target', { guild: this.guildId, db });
+        return;
+      }
+      log.info('changing capture gain', { guild: this.guildId, from: this.#gainDb, to: db });
+      this.#gainDb = db;
+      if (this.#tap?.format.gainAppliedInTap) {
+        this.#tap.setGain(db);
+        return;
+      }
+      // DirectShow and integer PCM cannot be scaled live in AudioTap; rebuild with ffmpeg volume.
+      await this.#replaceAudio();
+    });
+  }
+
+  /** Updates Discord's own self-mute flag without stopping capture or leaving the channel. */
+  async setMuted(muted: boolean): Promise<void> {
+    return this.#mutate(async () => {
+      if (muted === this.#muted) return;
+      if (
+        !this.#connection.rejoin({
+          channelId: this.channelId,
+          selfDeaf: true,
+          selfMute: muted,
+        })
+      ) {
+        throw new Error('Discord rejected the voice-state mute update.');
+      }
+      await entersState(this.#connection, VoiceConnectionStatus.Ready, 10_000);
+      this.#muted = muted;
+      log.info(muted ? 'bot muted in voice channel' : 'bot unmuted in voice channel', {
+        guild: this.guildId,
+        channel: this.channelId,
+      });
+    });
   }
 
   status(): SessionStatus {
@@ -191,6 +272,9 @@ export class BridgeSession {
       channelName: this.channelName,
       source: this.#source,
       bitrate: this.#bitrate,
+      bitrateCeiling: this.bitrateCeiling,
+      gainDb: this.#gainDb,
+      muted: this.#muted,
       vbr: config.opus.vbr,
       complexity: config.opus.complexity,
       captureFormat: this.#captureFormat,
@@ -207,6 +291,7 @@ export class BridgeSession {
   async destroy(): Promise<void> {
     if (this.#destroyed) return;
     this.#destroyed = true;
+    log.info('ending bridge session', { guild: this.guildId, channel: this.channelId });
 
     this.#player.stop(true);
     await this.#stopAudio();
@@ -214,10 +299,17 @@ export class BridgeSession {
     if (this.#connection.state.status !== VoiceConnectionStatus.Destroyed) {
       this.#connection.destroy();
     }
+    log.info('bridge session ended', { guild: this.guildId, channel: this.channelId });
   }
 
   async #startAudio(): Promise<void> {
     if (this.#destroyed) return;
+    log.debug('starting audio pipeline', {
+      guild: this.guildId,
+      sourceKind: this.#source.kind,
+      bitrate: this.#bitrate,
+      gainDb: this.#gainDb,
+    });
 
     let input: EncoderInput;
     let pcm: Tap['stream'] | undefined;
@@ -255,7 +347,7 @@ export class BridgeSession {
         input,
         bitrate: this.#bitrate,
         // A dshow source never passes through the tap, so gain has to happen in ffmpeg instead.
-        gainDb: this.#source.kind === 'dshow' ? this.#gainDb : 0,
+        gainDb: input.kind === 'dshow' || !input.format.gainAppliedInTap ? this.#gainDb : 0,
       },
       pcm,
     );
@@ -269,6 +361,8 @@ export class BridgeSession {
     });
 
     encoder.stream.once('error', (error: Error) => {
+      // An intentionally replaced encoder can report its final pipe error after the new one starts.
+      if (this.#encoder !== encoder || this.#changingAudio) return;
       log.error('encoder stream error', error);
       void this.#restartAudio();
     });
@@ -285,10 +379,22 @@ export class BridgeSession {
     const [tap, encoder] = [this.#tap, this.#encoder];
     this.#tap = null;
     this.#encoder = null;
+    if (tap || encoder) log.debug('stopping audio pipeline', { guild: this.guildId });
 
     // Encoder first: closing it releases the pipe the tap is writing into.
     await encoder?.close();
     await tap?.close();
+    if (tap || encoder) log.debug('audio pipeline stopped', { guild: this.guildId });
+  }
+
+  async #replaceAudio(): Promise<void> {
+    this.#changingAudio = true;
+    try {
+      await this.#stopAudio();
+      await this.#startAudio();
+    } finally {
+      this.#changingAudio = false;
+    }
   }
 
   async #restartAudio(): Promise<void> {
@@ -315,6 +421,10 @@ export class BridgeSession {
     } finally {
       this.#restarting = false;
     }
+
+    // A startup failure has no stream left to emit another error. Re-enter the bounded backoff
+    // loop explicitly so a transient device/ffmpeg failure still gets all configured attempts.
+    if (!this.#destroyed && this.#encoder === null) void this.#restartAudio();
   }
 
   #wirePlayer(): void {
@@ -325,7 +435,7 @@ export class BridgeSession {
 
     this.#player.on(AudioPlayerStatus.Idle, () => {
       // A live source should never end. If it does, ffmpeg or the tap died.
-      if (this.#destroyed) return;
+      if (this.#destroyed || this.#changingAudio || this.#restarting) return;
       log.warn('audio resource ended unexpectedly');
       void this.#restartAudio();
     });
@@ -333,10 +443,27 @@ export class BridgeSession {
     this.#player.on(AudioPlayerStatus.Playing, () => {
       // Reaching Playing means packets are flowing; forgive the earlier failures.
       this.#restarts = 0;
+      log.info('audio player is receiving packets', { guild: this.guildId });
+    });
+
+    this.#player.on('stateChange', (before, after) => {
+      log.debug('audio player state changed', {
+        guild: this.guildId,
+        from: before.status,
+        to: after.status,
+      });
     });
   }
 
   #wireConnection(): void {
+    this.#connection.on('stateChange', (before, after) => {
+      log.debug('voice connection state changed', {
+        guild: this.guildId,
+        from: before.status,
+        to: after.status,
+      });
+    });
+
     // The documented reconnect dance: a Disconnected connection is either moving to another
     // channel (recoverable) or genuinely gone (not).
     this.#connection.on(VoiceConnectionStatus.Disconnected, async () => {
@@ -356,6 +483,26 @@ export class BridgeSession {
 }
 
 const sessions = new Map<string, BridgeSession>();
+const guildOperations = new Map<string, Promise<unknown>>();
+
+function withGuildLock<T>(guildId: string, operation: () => Promise<T>): Promise<T> {
+  const previous = guildOperations.get(guildId) ?? Promise.resolve();
+  const next = previous.catch(() => undefined).then(operation);
+  guildOperations.set(guildId, next);
+  void next
+    .finally(() => {
+      if (guildOperations.get(guildId) === next) guildOperations.delete(guildId);
+    })
+    .catch(() => undefined);
+  return next;
+}
+
+function sameSource(a: SourceSpec, b: SourceSpec): boolean {
+  if (a.kind !== b.kind) return false;
+  if (a.kind === 'process' && b.kind === 'process') return a.pid === b.pid && a.exclude === b.exclude;
+  if (a.kind === 'device' && b.kind === 'device') return a.id === b.id;
+  return a.kind === 'dshow' && b.kind === 'dshow' && a.name === b.name;
+}
 
 export function getSession(guildId: string): BridgeSession | undefined {
   return sessions.get(guildId);
@@ -375,19 +522,22 @@ export async function startOrRetarget(
   source: SourceSpec,
   bitrate: number,
 ): Promise<BridgeSession> {
-  const existing = sessions.get(channel.guild.id);
+  return withGuildLock(channel.guild.id, async () => {
+    const existing = sessions.get(channel.guild.id);
 
-  if (existing && existing.channelId === channel.id) {
-    await existing.setSource(source);
-    if (existing.bitrate !== bitrate) await existing.setBitrate(bitrate);
-    return existing;
-  }
+    if (existing && existing.channelId === channel.id) {
+      log.debug('reusing existing voice connection', { guild: channel.guild.id, channel: channel.id });
+      if (!sameSource(existing.source, source)) await existing.setSource(source);
+      if (existing.bitrate !== bitrate) await existing.setBitrate(bitrate);
+      return existing;
+    }
 
-  if (existing) await endSession(channel.guild.id);
+    if (existing) await endSessionUnlocked(channel.guild.id);
 
-  const session = await BridgeSession.create(channel, source, { bitrate });
-  sessions.set(session.guildId, session);
-  return session;
+    const session = await BridgeSession.create(channel, source, { bitrate });
+    sessions.set(session.guildId, session);
+    return session;
+  });
 }
 
 export function setSession(session: BridgeSession): void {
@@ -395,6 +545,10 @@ export function setSession(session: BridgeSession): void {
 }
 
 export async function endSession(guildId: string): Promise<boolean> {
+  return withGuildLock(guildId, () => endSessionUnlocked(guildId));
+}
+
+async function endSessionUnlocked(guildId: string): Promise<boolean> {
   const session = sessions.get(guildId);
   if (!session) return false;
   sessions.delete(guildId);
@@ -403,5 +557,6 @@ export async function endSession(guildId: string): Promise<boolean> {
 }
 
 export async function endAllSessions(): Promise<void> {
+  if (sessions.size > 0) log.info('ending all bridge sessions', { count: sessions.size });
   await Promise.allSettled([...sessions.keys()].map((id) => endSession(id)));
 }

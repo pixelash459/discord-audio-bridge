@@ -51,12 +51,14 @@ internal sealed class MainForm : Form
 
     private async Task StartAsync()
     {
+        AppLog.Info("initializing desktop web view");
         try
         {
             await view.EnsureCoreWebView2Async();
         }
         catch (Exception ex)
         {
+            AppLog.Error("WebView2 initialization failed", ex);
             ShowFatal(
                 "WebView2 is not available",
                 "This window needs the Microsoft Edge WebView2 Runtime, which ships with Windows 11 " +
@@ -86,6 +88,7 @@ internal sealed class MainForm : Form
         {
             var progress = new Progress<string>(message => ShowSplash(message));
             var endpoint = await bot.EnsureRunningAsync(progress, cancel.Token);
+            AppLog.Info("navigating to control panel", new { endpoint.Port });
             view.CoreWebView2.Navigate(endpoint.Url);
         }
         catch (OperationCanceledException)
@@ -94,6 +97,7 @@ internal sealed class MainForm : Form
         }
         catch (Exception ex)
         {
+            AppLog.Error("desktop startup failed", ex);
             string tail;
             lock (startupLog) tail = startupLog.ToString();
             ShowFatal("The bot did not start", WebUtilityEncode(ex.Message), tail);
@@ -168,6 +172,7 @@ internal sealed class MainForm : Form
 
     private void ExitApplication()
     {
+        AppLog.Info("quit requested from tray");
         reallyExiting = true;
         Close();
         Application.Exit();

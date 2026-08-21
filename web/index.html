@@ -57,7 +57,10 @@
           <article id="live-card" class="card span-2" hidden>
             <header class="card-head">
               <h2>Now streaming</h2>
-              <button id="stop-btn" class="btn danger">Stop</button>
+              <div class="button-row">
+                <button id="mute-btn" class="btn ghost">Mute bot</button>
+                <button id="stop-btn" class="btn danger">Stop</button>
+              </div>
             </header>
 
             <div class="live-summary">
@@ -96,6 +99,7 @@
 
             <div class="stats-grid">
               <div><span class="label">Bitrate</span><strong id="stat-bitrate">—</strong></div>
+              <div><span class="label">Discord mute</span><strong id="stat-muted">—</strong></div>
               <div><span class="label">UDP ping</span><strong id="stat-ping">—</strong></div>
               <div><span class="label">Jitter buffer</span><strong id="stat-buffer">—</strong></div>
               <div><span class="label">Silence filled</span><strong id="stat-padded">—</strong></div>
@@ -223,6 +227,31 @@
                 <option value="debug">debug</option>
               </select>
             </label>
+            <label class="field">
+              <span class="label">Log file</span>
+              <input id="cfg-LOG_FILE" type="text" placeholder="logs/bridge.log (or off)" />
+            </label>
+            <label class="field">
+              <span class="label">Remote bind address</span>
+              <input id="cfg-REMOTE_HOST" type="text" placeholder="0.0.0.0" />
+            </label>
+            <label class="field">
+              <span class="label">Remote control port</span>
+              <input id="cfg-REMOTE_PORT" type="number" min="0" max="65535" placeholder="8788" />
+            </label>
+            <label class="field">
+              <span class="label">Trust Tailscale devices</span>
+              <select id="cfg-REMOTE_TRUST_TAILSCALE">
+                <option value="true">yes — no extra token on Tailscale</option>
+                <option value="false">no — always require token</option>
+              </select>
+            </label>
+          </article>
+
+          <article class="card span-2">
+            <header class="card-head"><h2>Remote control</h2></header>
+            <p class="muted">Use a token-protected runtime dashboard from another LAN or Tailscale device. Copy the URL for the interface that device can reach.</p>
+            <div id="remote-urls" class="button-row"></div>
           </article>
 
           <article class="card span-2">
@@ -256,6 +285,7 @@
               <button id="log-clear" class="btn ghost small">Clear</button>
             </div>
           </header>
+          <p id="log-file-hint" class="muted">Loading persistent log location…</p>
           <div id="log" class="log"></div>
         </article>
       </section>

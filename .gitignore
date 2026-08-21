@@ -3,10 +3,12 @@
 .env.*
 !.env.example
 .control-token
+.remote-token
 
 # ---- node ----
 node_modules/
 *.log
+logs/
 npm-debug.log*
 
 # ---- .NET build output ----

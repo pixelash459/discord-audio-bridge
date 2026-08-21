@@ -17,6 +17,7 @@ import {
 } from '../voice/session.ts';
 import { readConfig, writeConfig, RESTART_REQUIRED_KEYS, type EditableKey } from './envFile.ts';
 import { authStatus, signIn } from '../signin.ts';
+import { remoteAccessInfo } from '../remote/server.ts';
 
 const log = logger('api');
 
@@ -65,6 +66,7 @@ export interface Snapshot {
     audioTapBuilt: boolean;
     audioTapPath: string;
     ffmpegPath: string;
+    logFile: string | null;
   };
   defaults: {
     vbr: string;
@@ -93,6 +95,7 @@ export async function buildSnapshot(client: Client): Promise<Snapshot> {
       audioTapBuilt: isAudioTapBuilt(),
       audioTapPath: config.paths.audioTap,
       ffmpegPath: config.paths.ffmpeg,
+      logFile: config.paths.logFile ?? null,
     },
     defaults: {
       vbr: config.opus.vbr,
@@ -146,13 +149,14 @@ function requireChannel(client: Client, guildId: string, channelId: string): Voi
 }
 
 function resolveBitrate(channel: VoiceBasedChannel, requested?: number): number {
+  const ceiling = Math.min(channel.bitrate, channel.guild.maximumBitrate);
   if (requested) {
-    return Math.min(OPUS_MAX_BITRATE, Math.max(OPUS_MIN_BITRATE, Math.round(requested)));
+    return Math.min(ceiling, OPUS_MAX_BITRATE, Math.max(OPUS_MIN_BITRATE, Math.round(requested)));
   }
   if (config.opus.bitrate) {
-    return Math.min(OPUS_MAX_BITRATE, Math.max(OPUS_MIN_BITRATE, config.opus.bitrate));
+    return Math.min(ceiling, OPUS_MAX_BITRATE, Math.max(OPUS_MIN_BITRATE, config.opus.bitrate));
   }
-  return Math.min(channel.bitrate, channel.guild.maximumBitrate);
+  return ceiling;
 }
 
 function guilds(client: Client): GuildView[] {
@@ -189,6 +193,8 @@ function guilds(client: Client): GuildView[] {
 /** Runs a project npm script and streams its output into the log, for the Setup panel buttons. */
 function runScript(script: string): Promise<{ ok: boolean; output: string }> {
   return new Promise((done) => {
+    const started = performance.now();
+    log.info(`starting npm script: ${script}`);
     const child = spawn('npm', ['run', script], {
       cwd: projectRoot,
       shell: true,
@@ -206,8 +212,17 @@ function runScript(script: string): Promise<{ ok: boolean; output: string }> {
 
     child.stdout.on('data', capture);
     child.stderr.on('data', capture);
-    child.on('error', (error) => done({ ok: false, output: `${output}\n${error.message}` }));
-    child.on('close', (code) => done({ ok: code === 0, output: output.slice(-8000) }));
+    child.on('error', (error) => {
+      log.error(`could not start npm script: ${script}`, error);
+      done({ ok: false, output: `${output}\n${error.message}` });
+    });
+    child.on('close', (code) => {
+      log.info(`npm script finished: ${script}`, {
+        code,
+        durationMs: Math.round(performance.now() - started),
+      });
+      done({ ok: code === 0, output: output.slice(-8000) });
+    });
   });
 }
 
@@ -223,9 +238,22 @@ export async function handleApi(client: Client, req: IncomingMessage, url: URL):
 
     case 'GET /api/sources': {
       const [processes, devices, dshow] = await Promise.all([
-        isAudioTapBuilt() ? listProcesses().catch(() => []) : Promise.resolve([]),
-        isAudioTapBuilt() ? listDevices().catch(() => []) : Promise.resolve([]),
-        listDshowDevices().catch(() => []),
+        isAudioTapBuilt()
+          ? listProcesses().catch((error) => {
+              log.debug('process source enumeration failed', error);
+              return [];
+            })
+          : Promise.resolve([]),
+        isAudioTapBuilt()
+          ? listDevices().catch((error) => {
+              log.debug('device source enumeration failed', error);
+              return [];
+            })
+          : Promise.resolve([]),
+        listDshowDevices().catch((error) => {
+          log.debug('DirectShow source enumeration failed', error);
+          return [];
+        }),
       ]);
       return { processes, devices, dshow, audioTapBuilt: isAudioTapBuilt() };
     }
@@ -250,13 +278,21 @@ export async function handleApi(client: Client, req: IncomingMessage, url: URL):
       const channel = requireChannel(client, input.guildId, input.channelId);
       const bitrate = resolveBitrate(channel, input.bitrate);
       const session = await startOrRetarget(channel, input.source, bitrate);
+      log.info('stream request completed', {
+        guild: input.guildId,
+        channel: input.channelId,
+        sourceKind: input.source.kind,
+        bitrate,
+      });
       return { session: session.status() };
     }
 
     case 'POST /api/stop': {
       const { guildId } = await body<{ guildId: string }>(req);
       if (!guildId) throw new ApiError(400, 'guildId is required.');
-      return { stopped: await endSession(guildId) };
+      const stopped = await endSession(guildId);
+      log.info('stop request completed', { guild: guildId, stopped });
+      return { stopped };
     }
 
     case 'POST /api/gain': {
@@ -267,6 +303,17 @@ export async function handleApi(client: Client, req: IncomingMessage, url: URL):
         throw new ApiError(400, 'Gain must be between -60 and +20 dB.');
       }
       await session.setGain(db);
+      log.info('gain changed', { guild: guildId, db });
+      return { session: session.status() };
+    }
+
+    case 'POST /api/mute': {
+      const { guildId, muted } = await body<{ guildId: string; muted: boolean }>(req);
+      const session = getSession(guildId);
+      if (!session) throw new ApiError(404, 'Nothing is streaming in that server.');
+      if (typeof muted !== 'boolean') throw new ApiError(400, 'muted must be true or false.');
+      await session.setMuted(muted);
+      log.info('voice mute changed', { guild: guildId, muted });
       return { session: session.status() };
     }
 
@@ -274,10 +321,11 @@ export async function handleApi(client: Client, req: IncomingMessage, url: URL):
       const { guildId, bitrate } = await body<{ guildId: string; bitrate: number }>(req);
       const session = getSession(guildId);
       if (!session) throw new ApiError(404, 'Nothing is streaming in that server.');
-      if (bitrate < OPUS_MIN_BITRATE || bitrate > OPUS_MAX_BITRATE) {
+      if (typeof bitrate !== 'number' || bitrate < OPUS_MIN_BITRATE || bitrate > OPUS_MAX_BITRATE) {
         throw new ApiError(400, `Bitrate must be between ${OPUS_MIN_BITRATE} and ${OPUS_MAX_BITRATE}.`);
       }
       await session.setBitrate(Math.round(bitrate));
+      log.info('stream bitrate changed', { guild: guildId, bitrate: Math.round(bitrate) });
       return { session: session.status() };
     }
 
@@ -297,6 +345,7 @@ export async function handleApi(client: Client, req: IncomingMessage, url: URL):
       }
 
       await channel.edit({ bitrate: target, reason: 'Changed from the bridge control panel' });
+      log.info('voice channel bitrate changed', { guild: guildId, channel: channelId, bitrate: target });
       return { bitrate: target, maximum: max };
     }
 
@@ -311,6 +360,9 @@ export async function handleApi(client: Client, req: IncomingMessage, url: URL):
 
     case 'GET /api/config':
       return { ...readConfig(), restartRequired: RESTART_REQUIRED_KEYS };
+
+    case 'GET /api/remote':
+      return remoteAccessInfo();
 
     case 'POST /api/config': {
       const updates = await body<Partial<Record<EditableKey, string>>>(req);

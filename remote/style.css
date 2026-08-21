@@ -1,0 +1,77 @@
+:root {
+  font-family: Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  color: #f4f5f8;
+  background: #090b10;
+  font-synthesis: none;
+}
+
+* { box-sizing: border-box; }
+[hidden] { display: none !important; }
+body { margin: 0; min-height: 100vh; background: radial-gradient(circle at 50% -20%, #262b55, transparent 42%), #090b10; }
+button, input, select { font: inherit; }
+
+header {
+  max-width: 880px; margin: 0 auto; padding: 32px 20px 18px;
+  display: flex; align-items: center; justify-content: space-between; gap: 16px;
+}
+.eyebrow { margin: 0 0 4px; color: #8f98ad; font-size: 12px; letter-spacing: .12em; text-transform: uppercase; }
+h1 { margin: 0; font-size: clamp(24px, 6vw, 36px); letter-spacing: -.04em; }
+.connection { display: flex; align-items: center; gap: 8px; color: #aeb5c5; font-size: 13px; }
+.dot { width: 9px; height: 9px; border-radius: 50%; background: #e05b66; box-shadow: 0 0 14px #e05b66; }
+.dot.on { background: #43d17d; box-shadow: 0 0 14px #43d17d; }
+
+main { max-width: 880px; margin: 0 auto; padding: 14px 20px 48px; }
+.route-card {
+  margin-bottom: 16px; padding: 22px; border: 1px solid #343a4b; border-radius: 18px;
+  background: linear-gradient(145deg, rgb(31 35 49 / .97), rgb(18 21 30 / .98));
+  box-shadow: 0 18px 50px rgb(0 0 0 / .25);
+}
+.route-head { display: flex; align-items: center; justify-content: space-between; gap: 14px; margin-bottom: 18px; }
+.route-head h2 { margin: 0; font-size: 20px; letter-spacing: -.02em; }
+.route-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
+.field { display: grid; gap: 7px; color: #aeb5c5; font-size: 12px; }
+select {
+  width: 100%; min-width: 0; padding: 11px 38px 11px 12px; border: 1px solid #363c4d;
+  border-radius: 11px; color: #f4f5f8; background: #0c0e14; outline: none;
+}
+select:focus { border-color: #7c87ff; box-shadow: 0 0 0 3px rgb(124 135 255 / .15); }
+select:disabled { color: #707789; }
+.route-hint { min-height: 18px; margin: 12px 0; color: #8f98ad; font-size: 12px; }
+.apply { width: 100%; }
+button.quiet { padding: 8px 11px; color: #b7bed0; background: #252a36; font-size: 12px; }
+.sessions { display: grid; gap: 16px; }
+.card {
+  padding: 22px; border: 1px solid #292e3b; border-radius: 18px;
+  background: linear-gradient(145deg, rgb(25 28 37 / .95), rgb(15 17 24 / .97));
+  box-shadow: 0 18px 50px rgb(0 0 0 / .25);
+}
+.card-head { display: flex; justify-content: space-between; gap: 14px; align-items: start; margin-bottom: 22px; }
+.card h2 { margin: 0 0 5px; font-size: 20px; letter-spacing: -.02em; }
+.subtitle { margin: 0; color: #949caf; font-size: 13px; }
+.badge { padding: 6px 10px; border-radius: 99px; background: #1f4635; color: #75e2a1; font-size: 12px; white-space: nowrap; }
+.badge.muted { background: #4b262b; color: #ff929c; }
+.stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-bottom: 20px; }
+.stat { padding: 12px; border-radius: 12px; background: #0c0e14; }
+.stat span { display: block; color: #7f8799; font-size: 11px; text-transform: uppercase; letter-spacing: .08em; }
+.stat strong { display: block; margin-top: 4px; font-size: 14px; }
+.controls { display: grid; gap: 18px; }
+.control label { display: flex; justify-content: space-between; margin-bottom: 8px; color: #aeb5c5; font-size: 13px; }
+input[type="range"] { width: 100%; accent-color: #7c87ff; }
+.actions { display: grid; grid-template-columns: 1fr auto; gap: 10px; margin-top: 22px; }
+button { border: 0; border-radius: 12px; padding: 12px 16px; cursor: pointer; color: white; background: #5865f2; font-weight: 650; }
+button.secondary { background: #252a36; }
+button.danger { background: transparent; border: 1px solid #60323a; color: #ff929c; }
+button:disabled { opacity: .55; cursor: wait; }
+.empty { text-align: center; padding: 76px 20px; color: #8f98ad; }
+.empty h2 { color: #e8eaf0; margin: 16px 0 7px; }
+.empty p { max-width: 380px; margin: auto; line-height: 1.6; }
+.disc { width: 64px; height: 64px; margin: auto; display: grid; place-items: center; border-radius: 50%; background: #242943; color: #aeb5ff; font-size: 24px; }
+.toast { position: fixed; left: 50%; bottom: 22px; transform: translateX(-50%); padding: 11px 16px; border-radius: 10px; background: #252a36; box-shadow: 0 10px 30px #0008; font-size: 13px; }
+.toast.error { background: #572b33; }
+
+@media (max-width: 560px) {
+  header { padding-top: 22px; }
+  .route-grid { grid-template-columns: 1fr; }
+  .stats { grid-template-columns: 1fr 1fr; }
+  .card { padding: 18px; border-radius: 15px; }
+}

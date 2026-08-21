@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="dark" />
+    <title>Bridge Remote</title>
+    <link rel="stylesheet" href="/style.css" />
+  </head>
+  <body>
+    <header>
+      <div>
+        <p class="eyebrow">Discord Audio Bridge</p>
+        <h1>Remote control</h1>
+      </div>
+      <div class="connection"><span id="dot" class="dot"></span><span id="status">Connecting</span></div>
+    </header>
+
+    <main>
+      <section class="route-card" aria-labelledby="route-title">
+        <div class="route-head">
+          <div>
+            <p class="eyebrow">Stream route</p>
+            <h2 id="route-title">Source &amp; destination</h2>
+          </div>
+          <button id="refresh-options" class="quiet" type="button">Refresh</button>
+        </div>
+        <div class="route-grid">
+          <label class="field"><span>Server</span><select id="guild"></select></label>
+          <label class="field"><span>Voice channel</span><select id="channel"></select></label>
+          <label class="field"><span>Source type</span><select id="source-kind">
+            <option value="process">Application</option>
+            <option value="device">Output device</option>
+            <option value="dshow">Cable / DirectShow</option>
+          </select></label>
+          <label class="field"><span>Source</span><select id="source"></select></label>
+        </div>
+        <p id="route-hint" class="route-hint"></p>
+        <button id="apply-route" class="apply" type="button">Start stream</button>
+      </section>
+
+      <section id="empty" class="empty">
+        <div class="disc">♫</div>
+        <h2>No active stream</h2>
+        <p>Choose a source and destination above to start streaming.</p>
+      </section>
+      <section id="sessions" class="sessions" aria-live="polite"></section>
+    </main>
+
+    <div id="toast" class="toast" hidden></div>
+    <script type="module" src="/app.js"></script>
+  </body>
+</html>

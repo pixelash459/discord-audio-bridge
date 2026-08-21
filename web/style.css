@@ -26,6 +26,12 @@
   --mono: ui-monospace, "Cascadia Mono", "SF Mono", Menlo, Consolas, monospace;
 }
 
+/* Author-level display rules (for example .overlay { display: grid }) outrank the browser's
+   built-in [hidden] rule. Keep the HTML hidden contract authoritative for every component. */
+[hidden] {
+  display: none !important;
+}
+
 @media (prefers-color-scheme: light) {
   :root:not([data-theme="dark"]) {
     color-scheme: light;

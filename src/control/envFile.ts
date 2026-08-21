@@ -17,7 +17,11 @@ export const EDITABLE_KEYS = [
   'FFMPEG_PATH',
   'AUDIOTAP_PATH',
   'LOG_LEVEL',
+  'LOG_FILE',
   'CONTROL_PORT',
+  'REMOTE_HOST',
+  'REMOTE_PORT',
+  'REMOTE_TRUST_TAILSCALE',
 ] as const;
 
 export type EditableKey = (typeof EDITABLE_KEYS)[number];
@@ -134,5 +138,9 @@ export const RESTART_REQUIRED_KEYS: readonly string[] = [
   'FFMPEG_PATH',
   'AUDIOTAP_PATH',
   'LOG_LEVEL',
+  'LOG_FILE',
   'CONTROL_PORT',
+  'REMOTE_HOST',
+  'REMOTE_PORT',
+  'REMOTE_TRUST_TAILSCALE',
 ];

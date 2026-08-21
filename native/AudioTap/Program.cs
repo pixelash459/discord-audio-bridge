@@ -140,10 +140,13 @@ internal static class Program
 
         using var finished = new ManualResetEventSlim(false);
         Exception? failure = null;
+        var stopReason = "stdin closed";
 
         recorder.RecordingStopped += (_, e) =>
         {
             failure = e.Exception;
+            if (e.Exception is not null) stopReason = "capture failed";
+            else if (!finished.IsSet) stopReason = "capture stopped";
             finished.Set();
         };
 
@@ -175,6 +178,7 @@ internal static class Program
         Console.CancelKeyPress += (_, e) =>
         {
             e.Cancel = true;
+            stopReason = "console signal";
             finished.Set();
         };
 
@@ -198,8 +202,12 @@ internal static class Program
                         Emit("stats", new { bufferMs = s.BufferMs, targetMs = s.TargetMs, primed = s.Primed });
                         break;
                     case "quit":
+                        stopReason = "parent requested quit";
                         finished.Set();
                         return;
+                    default:
+                        Emit("warning", new { message = "Unknown stdin command", command = parts[0] });
+                        break;
                 }
             }
 
@@ -219,6 +227,7 @@ internal static class Program
             return 1;
         }
 
+        Emit("stopped", new { reason = stopReason });
         return 0;
     }
 

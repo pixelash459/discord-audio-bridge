@@ -221,13 +221,19 @@ function renderSources() {
 
 /* ── destination ──────────────────────────────────────────────────────────── */
 
+let guildsLoading = false;
+
 async function loadGuilds() {
+  if (guildsLoading) return;
+  guildsLoading = true;
   try {
     const { guilds } = await api('guilds');
     ui.guilds = guilds;
     renderGuilds();
   } catch (error) {
     fail(error);
+  } finally {
+    guildsLoading = false;
   }
 }
 
@@ -359,6 +365,20 @@ $('stop-btn').addEventListener('click', async () => {
   }
 });
 
+$('mute-btn').addEventListener('click', async () => {
+  const live = session();
+  if (!live) return;
+  const button = $('mute-btn');
+  button.disabled = true;
+  try {
+    await post('mute', { guildId: live.guildId, muted: !live.muted });
+  } catch (error) {
+    fail(error);
+  } finally {
+    button.disabled = false;
+  }
+});
+
 $('refresh-btn').addEventListener('click', () => void loadSources());
 
 // Sliders: track drag state so incoming snapshots do not yank the thumb, and only commit on release.
@@ -381,7 +401,6 @@ for (const [id, handler] of [
       fail(error);
     }
   };
-  input.addEventListener('pointerup', commit);
   input.addEventListener('change', commit);
 }
 
@@ -390,7 +409,16 @@ const session = () => ui.state?.sessions[0] ?? null;
 /* ── render ───────────────────────────────────────────────────────────────── */
 
 function render(state) {
+  const becameReady = !ui.state?.bot.ready && state.bot.ready;
   ui.state = state;
+
+  // The WebSocket commonly opens a fraction of a second before Discord's READY event. The first
+  // guild request is therefore legitimately empty; refresh it as soon as the ready snapshot lands.
+  if (becameReady) void loadGuilds();
+
+  $('log-file-hint').textContent = state.capabilities.logFile
+    ? `Live history is also written to ${state.capabilities.logFile}.`
+    : 'Disk logging is disabled; this tab contains in-memory history only.';
 
   $('bot-dot').className = `dot ${state.bot.ready ? 'on' : 'warn'}`;
   $('bot-state').textContent = state.bot.ready ? 'online' : 'connecting';
@@ -412,6 +440,9 @@ function render(state) {
   $('live-uptime').textContent = duration(live.uptimeMs);
 
   $('stat-bitrate').textContent = kbps(live.bitrate);
+  $('stat-muted').textContent = live.muted ? 'muted' : 'live';
+  $('mute-btn').textContent = live.muted ? 'Unmute bot' : 'Mute bot';
+  $('mute-btn').classList.toggle('danger', !live.muted);
   $('stat-ping').textContent = live.ping === null ? '—' : `${live.ping} ms`;
   $('stat-player').textContent = live.playerState;
 
@@ -441,8 +472,13 @@ function render(state) {
   }
 
   if (!ui.dragging.has('bitrate')) {
+    $('bitrate').max = String(Math.round(live.bitrateCeiling / 1000));
     $('bitrate').value = String(Math.round(live.bitrate / 1000));
     $('bitrate-value').textContent = kbps(live.bitrate);
+  }
+  if (!ui.dragging.has('gain')) {
+    $('gain').value = String(live.gainDb);
+    $('gain-value').textContent = `${Number(live.gainDb).toFixed(1)} dB`;
   }
 }
 
@@ -511,9 +547,31 @@ async function loadConfig(force = false) {
       if (input) input.value = value;
     }
     $('token-set').hidden = !config.secretsSet.DISCORD_TOKEN;
+    await loadRemoteInfo();
     configLoaded = true;
   } catch (error) {
     fail(error);
+  }
+}
+
+async function loadRemoteInfo() {
+  const container = $('remote-urls');
+  container.replaceChildren();
+  const info = await api('remote');
+  if (!info.enabled) {
+    container.textContent = 'Remote control is disabled. Set a non-zero REMOTE_PORT and restart.';
+    return;
+  }
+  for (const url of info.urls) {
+    const origin = new URL(url).origin;
+    const button = document.createElement('button');
+    button.className = 'btn ghost';
+    button.textContent = `Copy ${origin}`;
+    button.addEventListener('click', async () => {
+      await navigator.clipboard.writeText(url);
+      toast(`Copied remote URL for ${origin}.`, 'ok');
+    });
+    container.append(button);
   }
 }
 

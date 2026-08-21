@@ -49,7 +49,10 @@ function explain(error: unknown): string {
  * Without that, entering a token would require a token.
  */
 export async function signIn(client: Client): Promise<void> {
-  if (client.isReady()) return;
+  if (client.isReady()) {
+    log.debug('sign-in skipped because the client is already ready');
+    return;
+  }
 
   if (attempting) throw new Error('A sign-in attempt is already running.');
 
@@ -61,10 +64,12 @@ export async function signIn(client: Client): Promise<void> {
 
   attempting = true;
   lastError = null;
+  const started = performance.now();
+  log.info('signing in to Discord');
 
   try {
     await client.login(token);
-    log.info('signed in to Discord');
+    log.info('signed in to Discord', { durationMs: Math.round(performance.now() - started) });
   } catch (error) {
     lastError = explain(error);
     log.error(`sign-in failed: ${lastError}`);
@@ -73,8 +78,9 @@ export async function signIn(client: Client): Promise<void> {
     // attempt starts clean instead of failing with "already logged in".
     try {
       await client.destroy();
-    } catch {
-      /* nothing was connected */
+      log.debug('reset Discord client after failed sign-in');
+    } catch (destroyError) {
+      log.debug('Discord client reset after failed sign-in also failed', destroyError);
     }
 
     throw new Error(lastError);

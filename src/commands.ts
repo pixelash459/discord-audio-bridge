@@ -15,7 +15,7 @@ import { config } from './config.ts';
 import { logger } from './logger.ts';
 import { listDshowDevices } from './audio/encoder.ts';
 import { isAudioTapBuilt, listDevices, listProcesses } from './audio/tap.ts';
-import { BridgeSession, endSession, getSession, setSession, type SourceSpec } from './voice/session.ts';
+import { endSession, getSession, startOrRetarget, type SourceSpec } from './voice/session.ts';
 
 const log = logger('commands');
 
@@ -44,8 +44,9 @@ function callerVoiceChannel(interaction: ChatInputCommandInteraction): VoiceBase
  */
 function resolveBitrate(channel: VoiceBasedChannel): number {
   const override = config.opus.bitrate;
-  if (override) return Math.min(OPUS_MAX_BITRATE, Math.max(OPUS_MIN_BITRATE, override));
-  return Math.min(channel.bitrate, channel.guild.maximumBitrate);
+  const ceiling = Math.min(channel.bitrate, channel.guild.maximumBitrate);
+  if (override) return Math.min(ceiling, OPUS_MAX_BITRATE, Math.max(OPUS_MIN_BITRATE, override));
+  return ceiling;
 }
 
 export class UserError extends Error {}
@@ -65,14 +66,7 @@ async function startStream(
   const channel = callerVoiceChannel(interaction);
   const bitrate = resolveBitrate(channel);
 
-  const existing = getSession(interaction.guildId!);
-  if (existing && existing.channelId === channel.id) {
-    await existing.setSource(source);
-  } else {
-    if (existing) await endSession(interaction.guildId!);
-    const session = await BridgeSession.create(channel, source, { bitrate });
-    setSession(session);
-  }
+  await startOrRetarget(channel, source, bitrate);
 
   const started = getSession(interaction.guildId!)!.status();
 
@@ -353,18 +347,16 @@ const bitrate: Command = {
     const requested = interaction.options.getInteger('kbps');
     const target =
       requested !== null
-        ? requested * 1000
+        ? Math.min(requested * 1000, session.bitrateCeiling)
         : channel && channel.isVoiceBased()
           ? Math.min(channel.bitrate, interaction.guild!.maximumBitrate)
           : session.bitrate;
 
     await session.setBitrate(target);
 
-    const channelBitrate = channel?.isVoiceBased() ? channel.bitrate : undefined;
     const warning =
-      channelBitrate !== undefined && target > channelBitrate
-        ? `\n⚠ That is above this channel's own ${Math.round(channelBitrate / 1000)} kbps setting, ` +
-          'so listeners may not benefit. Raise the channel with `/quality` instead.'
+      requested !== null && requested * 1000 > target
+        ? `\nCapped at this channel's ${Math.round(target / 1000)} kbps ceiling.`
         : '';
 
     await interaction.editReply(`Re-encoding at ${Math.round(target / 1000)} kbps.${warning}`);
@@ -517,6 +509,8 @@ export async function collectDiagnostics(): Promise<string> {
     `libopus     ${hasLibopus ? 'available' : 'MISSING - ffmpeg build has no libopus encoder'}`,
     `AudioTap    ${isAudioTapBuilt() ? config.paths.audioTap : `NOT BUILT (expected ${config.paths.audioTap})`}`,
     `dotnet SDK  ${dotnetSdk}`,
+    `log file    ${config.paths.logFile ?? 'disabled'}`,
+    `remote UI   ${config.remote.port > 0 ? `${config.remote.host}:${config.remote.port}` : 'disabled'}`,
     '',
     '--- @discordjs/voice ---',
     generateDependencyReport(),

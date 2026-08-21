@@ -4,8 +4,10 @@ import { commandsByName, UserError } from './commands.ts';
 import { config } from './config.ts';
 import { logger } from './logger.ts';
 import { signIn, hasToken } from './signin.ts';
-import { isAudioTapBuilt } from './audio/tap.ts';
+import { closeAllTaps, isAudioTapBuilt } from './audio/tap.ts';
+import { closeAllEncoders } from './audio/encoder.ts';
 import { ControlServer } from './control/server.ts';
+import { RemoteServer } from './remote/server.ts';
 import { endAllSessions } from './voice/session.ts';
 
 const log = logger('bot');
@@ -41,8 +43,19 @@ client.on(Events.InteractionCreate, async (interaction) => {
   const command = commandsByName.get(interaction.commandName);
   if (!command) return;
 
+  const started = performance.now();
+  log.info(`/${interaction.commandName} invoked`, {
+    guild: interaction.guildId,
+    channel: interaction.channelId,
+    user: interaction.user.id,
+  });
+
   try {
     await command.execute(interaction);
+    log.info(`/${interaction.commandName} completed`, {
+      guild: interaction.guildId,
+      durationMs: Math.round(performance.now() - started),
+    });
   } catch (error) {
     const friendly =
       error instanceof UserError
@@ -64,10 +77,19 @@ client.on(Events.InteractionCreate, async (interaction) => {
 });
 
 client.on(Events.Error, (error) => log.error('client error', error));
+client.on(Events.Warn, (message) => log.warn(`Discord client: ${message}`));
+client.on(Events.Debug, (message) => log.debug(`Discord client: ${message}`));
 
 /* ── startup ──────────────────────────────────────────────────────────────── */
 
 let control: ControlServer | undefined;
+let remote: RemoteServer | undefined;
+log.info('starting Discord Audio Bridge', {
+  node: process.version,
+  platform: `${process.platform}/${process.arch}`,
+  pid: process.pid,
+  logFile: config.paths.logFile ?? 'disabled',
+});
 
 // The control panel comes up BEFORE sign-in, on purpose. Its Setup tab is where you enter the bot
 // token, so gating it behind a successful sign-in would mean needing a token to enter a token.
@@ -91,6 +113,29 @@ if (config.control.port > 0) {
   }
 } else {
   log.info('control panel disabled (CONTROL_PORT=0)');
+}
+
+// The remote dashboard is deliberately a separate, restricted server. It exposes runtime controls
+// but none of the local panel's credential, configuration, build, or command-registration routes.
+if (config.remote.port > 0) {
+  try {
+    remote = new RemoteServer(
+      client,
+      config.remote.host,
+      config.remote.port,
+      config.remote.token,
+      config.remote.trustTailscale,
+    );
+    await remote.start();
+    process.stdout.write('\n  Remote control (keep these URLs private):\n');
+    for (const url of remote.accessUrls()) process.stdout.write(`  ${url}\n`);
+    process.stdout.write('\n');
+  } catch (error) {
+    remote = undefined;
+    log.error(`remote control could not start on ${config.remote.host}:${config.remote.port}`, error);
+  }
+} else {
+  log.info('remote control disabled (REMOTE_PORT=0)');
 }
 
 // A failed sign-in is not fatal while the panel is up: it is the one screen that can fix it.
@@ -122,8 +167,10 @@ async function shutdown(signal: string): Promise<void> {
   shuttingDown = true;
 
   log.info(`${signal} - shutting down`);
+  await remote?.stop().catch(() => undefined);
   await control?.stop().catch(() => undefined);
   await endAllSessions();
+  await Promise.allSettled([closeAllEncoders(), closeAllTaps()]);
   await client.destroy();
   process.exit(0);
 }

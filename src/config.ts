@@ -44,6 +44,12 @@ export type LogLevel = (typeof logLevels)[number];
 
 const defaultTapPath = join(projectRoot, 'native', 'AudioTap', 'bin', 'AudioTap.exe');
 
+function logFile(): string | undefined {
+  const raw = optional('LOG_FILE');
+  if (raw?.toLowerCase() === 'off') return undefined;
+  return resolve(projectRoot, raw ?? join('logs', 'bridge.log'));
+}
+
 export const config = {
   // Validated lazily: `npm run doctor` and the source listings are useful before a token exists,
   // so demanding one at import time would break the tools people reach for while setting up.
@@ -72,9 +78,19 @@ export const config = {
     port: integer('CONTROL_PORT', 8787),
     autoOpen: (optional('CONTROL_OPEN') ?? 'false').toLowerCase() === 'true',
   },
+  remote: {
+    /** Network-facing runtime controls only. Set REMOTE_PORT=0 to disable. */
+    port: integer('REMOTE_PORT', 8788),
+    host: optional('REMOTE_HOST') ?? '0.0.0.0',
+    token: optional('REMOTE_TOKEN'),
+    /** Personal tailnets can use Tailscale's device authentication instead of another URL token. */
+    trustTailscale: (optional('REMOTE_TRUST_TAILSCALE') ?? 'true').toLowerCase() === 'true',
+  },
   paths: {
     ffmpeg: optional('FFMPEG_PATH') ?? 'ffmpeg',
     audioTap: optional('AUDIOTAP_PATH') ?? defaultTapPath,
+    /** Persistent UTF-8 JSON-lines log. Set LOG_FILE=off to keep logs in memory/console only. */
+    logFile: logFile(),
   },
   logLevel: ((): LogLevel => {
     const raw = (optional('LOG_LEVEL') ?? 'info') as LogLevel;

@@ -33,22 +33,7 @@ jobs:
         run: npm run typecheck
 
       - name: Verify the sources actually load
-        # Type stripping happens at runtime, so a syntax error that tsc tolerates would still
-        # break `npm start`. Importing every module proves they parse and link.
-        run: |
-          node --experimental-strip-types --input-type=module -e '
-            const modules = [
-              "./src/config.ts", "./src/logger.ts", "./src/commands.ts",
-              "./src/audio/tap.ts", "./src/audio/encoder.ts",
-              "./src/voice/session.ts",
-              "./src/control/server.ts", "./src/control/api.ts", "./src/control/envFile.ts",
-            ];
-            for (const m of modules) await import(m);
-            console.log(`loaded ${modules.length} modules`);
-          '
-        env:
-          DISCORD_TOKEN: ci-placeholder
-          DISCORD_APP_ID: "0"
+        run: npm run smoke
 
   # AudioTap and the desktop shell are Windows-only by construction.
   native:

@@ -78,8 +78,8 @@ bot if it finds one, so you can keep `npm start` open in a terminal while iterat
 
 ```powershell
 npm run typecheck
-dotnet build native/AudioTap/AudioTap.csproj -c Release -warnaserror
-dotnet build desktop/BridgeApp/BridgeApp.csproj -c Release -warnaserror
+npm run smoke
+dotnet build DiscordAudioBridge.sln -c Release -warnaserror
 ```
 
 CI runs exactly these, with `-warnaserror` on both C# projects. Please do not suppress a warning

@@ -1,0 +1,27 @@
+# ---- secrets and runtime state ----
+.env
+.env.*
+!.env.example
+.control-token
+
+# ---- node ----
+node_modules/
+*.log
+npm-debug.log*
+
+# ---- .NET build output ----
+bin/
+obj/
+native/AudioTap/bin/
+native/AudioTap/obj/
+desktop/BridgeApp/bin/
+desktop/BridgeApp/obj/
+
+# ---- editors / os ----
+.vs/
+.idea/
+*.user
+*.suo
+Thumbs.db
+desktop.ini
+.DS_Store

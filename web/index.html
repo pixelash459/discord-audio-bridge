@@ -1,0 +1,260 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="dark light" />
+    <title>Discord Audio Bridge</title>
+    <link rel="stylesheet" href="/style.css" />
+    <link
+      rel="icon"
+      href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><text y='26' font-size='26'>🎧</text></svg>"
+    />
+  </head>
+  <body>
+    <div id="disconnected" class="overlay" hidden>
+      <div class="overlay-card">
+        <div class="spinner"></div>
+        <h2>Waiting for the bot</h2>
+        <p id="disconnected-detail">Reconnecting to the control server…</p>
+      </div>
+    </div>
+
+    <header class="topbar">
+      <div class="brand">
+        <span class="brand-mark">🎧</span>
+        <div>
+          <h1>Discord Audio Bridge</h1>
+          <p id="bot-identity" class="muted">connecting…</p>
+        </div>
+      </div>
+      <div class="topbar-status">
+        <span id="bot-dot" class="dot"></span>
+        <span id="bot-state">offline</span>
+        <span id="bot-ping" class="pill" hidden></span>
+      </div>
+    </header>
+
+    <nav class="tabs" role="tablist">
+      <button class="tab active" role="tab" data-tab="stream">Stream</button>
+      <button class="tab" role="tab" data-tab="setup">Setup</button>
+      <button class="tab" role="tab" data-tab="logs">Logs</button>
+    </nav>
+
+    <main>
+      <!-- ─────────────────────────────  STREAM  ───────────────────────────── -->
+      <section class="panel active" data-panel="stream">
+        <div class="grid">
+          <!-- Live session -->
+          <article id="live-card" class="card span-2" hidden>
+            <header class="card-head">
+              <h2>Now streaming</h2>
+              <button id="stop-btn" class="btn danger">Stop</button>
+            </header>
+
+            <div class="live-summary">
+              <div>
+                <span class="label">Source</span>
+                <strong id="live-source">—</strong>
+              </div>
+              <div>
+                <span class="label">Channel</span>
+                <strong id="live-channel">—</strong>
+              </div>
+              <div>
+                <span class="label">Capture</span>
+                <strong id="live-format">—</strong>
+              </div>
+              <div>
+                <span class="label">Uptime</span>
+                <strong id="live-uptime">—</strong>
+              </div>
+            </div>
+
+            <div class="meters">
+              <div class="meter-row">
+                <span class="meter-label">L</span>
+                <div class="meter"><div class="meter-fill" id="meter-l"></div><div class="meter-peak" id="peak-l"></div></div>
+                <span class="meter-db" id="db-l">−∞</span>
+              </div>
+              <div class="meter-row">
+                <span class="meter-label">R</span>
+                <div class="meter"><div class="meter-fill" id="meter-r"></div><div class="meter-peak" id="peak-r"></div></div>
+                <span class="meter-db" id="db-r">−∞</span>
+              </div>
+            </div>
+
+            <div id="live-warning" class="notice warn" hidden></div>
+
+            <div class="stats-grid">
+              <div><span class="label">Bitrate</span><strong id="stat-bitrate">—</strong></div>
+              <div><span class="label">UDP ping</span><strong id="stat-ping">—</strong></div>
+              <div><span class="label">Jitter buffer</span><strong id="stat-buffer">—</strong></div>
+              <div><span class="label">Silence filled</span><strong id="stat-padded">—</strong></div>
+              <div><span class="label">Drift trimmed</span><strong id="stat-trim">—</strong></div>
+              <div><span class="label">Player</span><strong id="stat-player">—</strong></div>
+            </div>
+
+            <div class="controls">
+              <label class="control">
+                <span class="label">Gain <output id="gain-value">0.0 dB</output></span>
+                <input id="gain" type="range" min="-30" max="12" step="0.5" value="0" />
+              </label>
+              <label class="control">
+                <span class="label">Opus bitrate <output id="bitrate-value">—</output></span>
+                <input id="bitrate" type="range" min="32" max="384" step="8" value="96" />
+              </label>
+            </div>
+          </article>
+
+          <!-- Destination -->
+          <article class="card">
+            <header class="card-head"><h2>Destination</h2></header>
+            <label class="field">
+              <span class="label">Server</span>
+              <select id="guild-select"></select>
+            </label>
+            <label class="field">
+              <span class="label">Voice channel</span>
+              <select id="channel-select"></select>
+            </label>
+            <div id="channel-hint" class="notice info" hidden></div>
+            <button id="maximize-btn" class="btn ghost" hidden>Raise channel to server maximum</button>
+          </article>
+
+          <!-- Source -->
+          <article class="card">
+            <header class="card-head">
+              <h2>Source</h2>
+              <div class="seg" role="tablist">
+                <button class="seg-btn active" data-source="process">App</button>
+                <button class="seg-btn" data-source="device">Device</button>
+                <button class="seg-btn" data-source="dshow">Cable</button>
+              </div>
+            </header>
+
+            <div id="tap-missing" class="notice warn" hidden>
+              AudioTap is not built, so per-app capture is unavailable.
+              <button class="link" data-goto="setup">Build it in Setup →</button>
+            </div>
+
+            <p id="source-hint" class="muted small"></p>
+            <div id="source-list" class="source-list"></div>
+            <button id="refresh-btn" class="btn ghost small">Refresh</button>
+          </article>
+        </div>
+      </section>
+
+      <!-- ─────────────────────────────  SETUP  ───────────────────────────── -->
+      <section class="panel" data-panel="setup">
+        <div class="grid">
+          <article class="card span-2">
+            <header class="card-head"><h2>Discord credentials</h2></header>
+            <p class="muted small">
+              From
+              <a href="https://discord.com/developers/applications" target="_blank" rel="noreferrer"
+                >discord.com/developers/applications</a
+              >. The token is written to <code>.env</code> and never sent back to this page.
+            </p>
+            <label class="field">
+              <span class="label">Bot token <span id="token-set" class="pill ok" hidden>saved</span></span>
+              <input id="cfg-DISCORD_TOKEN" type="password" placeholder="leave blank to keep the current one" autocomplete="off" />
+            </label>
+            <div class="two-up">
+              <label class="field">
+                <span class="label">Application ID</span>
+                <input id="cfg-DISCORD_APP_ID" type="text" inputmode="numeric" autocomplete="off" />
+              </label>
+              <label class="field">
+                <span class="label">Dev server ID <span class="muted">(optional)</span></span>
+                <input id="cfg-DISCORD_GUILD_ID" type="text" inputmode="numeric" autocomplete="off" />
+              </label>
+            </div>
+          </article>
+
+          <article class="card">
+            <header class="card-head"><h2>Audio defaults</h2></header>
+            <label class="field">
+              <span class="label">VBR mode</span>
+              <select id="cfg-OPUS_VBR">
+                <option value="on">on — unconstrained, best quality</option>
+                <option value="constrained">constrained — bounded peaks</option>
+                <option value="off">off — constant bitrate</option>
+              </select>
+            </label>
+            <label class="field">
+              <span class="label">Encoder complexity</span>
+              <input id="cfg-OPUS_COMPLEXITY" type="number" min="0" max="10" />
+            </label>
+            <label class="field">
+              <span class="label">Jitter buffer (ms)</span>
+              <input id="cfg-CAPTURE_BUFFER_MS" type="number" min="20" max="2000" step="10" />
+            </label>
+            <label class="field">
+              <span class="label">Bitrate override (bps) <span class="muted">(blank = match channel)</span></span>
+              <input id="cfg-OPUS_BITRATE" type="number" min="8000" max="510000" step="1000" />
+            </label>
+          </article>
+
+          <article class="card">
+            <header class="card-head"><h2>Paths</h2></header>
+            <label class="field">
+              <span class="label">ffmpeg</span>
+              <input id="cfg-FFMPEG_PATH" type="text" placeholder="ffmpeg" />
+            </label>
+            <label class="field">
+              <span class="label">AudioTap.exe</span>
+              <input id="cfg-AUDIOTAP_PATH" type="text" placeholder="native/AudioTap/bin/AudioTap.exe" />
+            </label>
+            <label class="field">
+              <span class="label">Log level</span>
+              <select id="cfg-LOG_LEVEL">
+                <option value="error">error</option>
+                <option value="warn">warn</option>
+                <option value="info">info</option>
+                <option value="debug">debug</option>
+              </select>
+            </label>
+          </article>
+
+          <article class="card span-2">
+            <header class="card-head">
+              <h2>Actions</h2>
+              <button id="save-btn" class="btn primary">Save settings</button>
+            </header>
+            <div id="save-notice" class="notice info" hidden></div>
+            <div class="button-row">
+              <button id="build-btn" class="btn">Build AudioTap</button>
+              <button id="register-btn" class="btn">Register slash commands</button>
+              <button id="diag-btn" class="btn ghost">Run diagnostics</button>
+            </div>
+            <pre id="diag-output" class="output" hidden></pre>
+          </article>
+        </div>
+      </section>
+
+      <!-- ─────────────────────────────  LOGS  ───────────────────────────── -->
+      <section class="panel" data-panel="logs">
+        <article class="card">
+          <header class="card-head">
+            <h2>Log</h2>
+            <div class="button-row">
+              <select id="log-filter">
+                <option value="debug">all</option>
+                <option value="info" selected>info and above</option>
+                <option value="warn">warnings and errors</option>
+                <option value="error">errors only</option>
+              </select>
+              <button id="log-clear" class="btn ghost small">Clear</button>
+            </div>
+          </header>
+          <div id="log" class="log"></div>
+        </article>
+      </section>
+    </main>
+
+    <div id="toast" class="toast" hidden></div>
+
+    <script type="module" src="/app.js"></script>
+  </body>
+</html>

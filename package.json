@@ -1,0 +1,33 @@
+{
+  "name": "discord-audio-bridge",
+  "version": "1.0.0",
+  "description": "Streams audio from a specific Windows application into a Discord voice channel at the highest quality Discord allows.",
+  "type": "module",
+  "private": true,
+  "engines": {
+    "node": ">=22.18.0"
+  },
+  "scripts": {
+    "start": "node src/index.ts",
+    "dev": "node --watch src/index.ts",
+    "register": "node src/register.ts",
+    "typecheck": "tsc --noEmit",
+    "build:native": "powershell -ExecutionPolicy Bypass -File scripts/build-native.ps1",
+    "doctor": "node src/doctor.ts",
+    "build:app": "powershell -ExecutionPolicy Bypass -File scripts/build-app.ps1",
+    "app": "powershell -ExecutionPolicy Bypass -File scripts/build-app.ps1 -Run",
+    "setup": "powershell -ExecutionPolicy Bypass -File scripts/setup.ps1"
+  },
+  "dependencies": {
+    "@discordjs/voice": "^0.19.2",
+    "@noble/ciphers": "^2.0.0",
+    "discord.js": "^14.27.0",
+    "prism-media": "^1.3.5",
+    "ws": "^8.21.3"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "@types/ws": "^8.18.1",
+    "typescript": "^5.9.0"
+  }
+}

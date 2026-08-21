@@ -1,0 +1,72 @@
+name: Audio quality problem
+description: It streams, but it does not sound right
+labels: [audio-quality]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Before filing, please check two things that account for most quality reports:
+
+        1. **The voice channel's bitrate.** Discord caps it by server boost tier — 96 kbps
+           unboosted, then 128/256/384 at tiers 1/2/3. Run `/quality` to see where you stand.
+           Below about 128 kbps you are hearing Discord's cap, not this bot.
+        2. **Whether you are routing through a virtual cable.** If so, try `/stream app` instead
+           and say whether it changed anything.
+
+  - type: dropdown
+    id: symptom
+    attributes:
+      label: What does it sound like?
+      options:
+        - Dull or flat — missing high end
+        - Pumping or breathing — the level moves on its own
+        - Stuttering, dropouts, or clicks
+        - Distorted or crackly
+        - Wrong speed or pitch
+        - Something else
+    validations:
+      required: true
+
+  - type: dropdown
+    id: capture-mode
+    attributes:
+      label: Capture mode
+      options:
+        - Per-application (/stream app)
+        - Output device (/stream device)
+        - DirectShow / virtual cable (/stream dshow)
+    validations:
+      required: true
+
+  - type: textarea
+    id: status
+    attributes:
+      label: Output of `/status`
+      description: Include the capture format, bitrate, jitter buffer, and silence-filled figures.
+      render: text
+    validations:
+      required: true
+
+  - type: input
+    id: channel-bitrate
+    attributes:
+      label: Voice channel bitrate and server boost tier
+      placeholder: "96 kbps, tier 0"
+    validations:
+      required: true
+
+  - type: input
+    id: source-app
+    attributes:
+      label: Source application
+      placeholder: "Spotify, Foobar2000, a browser tab…"
+    validations:
+      required: true
+
+  - type: textarea
+    id: doctor
+    attributes:
+      label: Output of `npm run doctor`
+      render: text
+    validations:
+      required: true

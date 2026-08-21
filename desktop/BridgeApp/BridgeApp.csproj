@@ -1,0 +1,33 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net9.0-windows</TargetFramework>
+    <RollForward>LatestMajor</RollForward>
+    <UseWindowsForms>true</UseWindowsForms>
+    <!-- The WebView2 package always brings its WPF control along, which references a different
+         WindowsBase than a WinForms-only app resolves. Enabling WPF unifies the two and clears
+         MSB3277; we still only ever construct the WinForms control. -->
+    <UseWPF>true</UseWPF>
+    <!-- Configured here rather than in app.manifest, which is what WFO0003 asks for; the
+         ApplicationConfiguration.Initialize() call in Program.cs applies it. -->
+    <ApplicationHighDpiMode>PerMonitorV2</ApplicationHighDpiMode>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AssemblyName>DiscordAudioBridge</AssemblyName>
+    <RootNamespace>BridgeApp</RootNamespace>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <InvariantGlobalization>true</InvariantGlobalization>
+    <SatelliteResourceLanguages>en</SatelliteResourceLanguages>
+    <!-- Ship the assemblies, not their IntelliSense XML: those are half the output size. -->
+    <AllowedReferenceRelatedFileExtensions>none</AllowedReferenceRelatedFileExtensions>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- The shell is deliberately thin: a native window hosting the same control panel the bot
+         already serves. WebView2 ships with Windows 10/11, so this adds ~1MB rather than the
+         ~150MB an Electron build would. -->
+    <PackageReference Include="Microsoft.Web.WebView2" Version="1.0.4129.50" />
+  </ItemGroup>
+
+</Project>

@@ -1,0 +1,27 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <!-- Windows-only by construction: WASAPI process loopback has no cross-platform equivalent. -->
+    <TargetFramework>net9.0-windows</TargetFramework>
+    <!-- Run on whatever modern .NET runtime is installed, not strictly 9.x -->
+    <RollForward>LatestMajor</RollForward>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AssemblyName>AudioTap</AssemblyName>
+    <RootNamespace>AudioTap</RootNamespace>
+    <InvariantGlobalization>true</InvariantGlobalization>
+    <SatelliteResourceLanguages>en</SatelliteResourceLanguages>
+    <!-- WASAPI COM activation is happiest on an MTA thread -->
+    <ServerGarbageCollection>false</ServerGarbageCollection>
+    <ConcurrentGarbageCollection>false</ConcurrentGarbageCollection>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- NAudio 3 is the first version whose WasapiRecorderBuilder exposes
+         WithProcessLoopback(), i.e. ActivateAudioInterfaceAsync +
+         AUDIOCLIENT_PROCESS_LOOPBACK_PARAMS. Pinned because it is prerelease. -->
+    <PackageReference Include="NAudio.Wasapi" Version="3.0.2-preview.1" />
+  </ItemGroup>
+
+</Project>

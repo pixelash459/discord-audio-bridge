@@ -1,0 +1,101 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  # The bot half is platform-independent to typecheck, so it runs on Linux where runners are
+  # cheapest and fastest.
+  bot:
+    name: Bot (TypeScript)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      - run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Verify the sources actually load
+        # Type stripping happens at runtime, so a syntax error that tsc tolerates would still
+        # break `npm start`. Importing every module proves they parse and link.
+        run: |
+          node --experimental-strip-types --input-type=module -e '
+            const modules = [
+              "./src/config.ts", "./src/logger.ts", "./src/commands.ts",
+              "./src/audio/tap.ts", "./src/audio/encoder.ts",
+              "./src/voice/session.ts",
+              "./src/control/server.ts", "./src/control/api.ts", "./src/control/envFile.ts",
+            ];
+            for (const m of modules) await import(m);
+            console.log(`loaded ${modules.length} modules`);
+          '
+        env:
+          DISCORD_TOKEN: ci-placeholder
+          DISCORD_APP_ID: "0"
+
+  # AudioTap and the desktop shell are Windows-only by construction.
+  native:
+    name: Native (Windows)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "9.0.x"
+
+      - name: Build AudioTap
+        run: dotnet build native/AudioTap/AudioTap.csproj -c Release --nologo -warnaserror
+
+      - name: Build the desktop app
+        run: dotnet build desktop/BridgeApp/BridgeApp.csproj -c Release --nologo -warnaserror
+
+      - name: Smoke test AudioTap
+        # No audio device on a CI runner, so enumeration returning an empty list is a pass;
+        # what matters is that the binary starts and emits valid JSON.
+        run: |
+          $output = dotnet run --project native/AudioTap/AudioTap.csproj -c Release --no-build -- --list-devices
+          Write-Host "devices: $output"
+          $null = $output | ConvertFrom-Json
+          Write-Host "AudioTap produced valid JSON"
+        shell: pwsh
+
+  # Catches shell scripts that would fail the moment a contributor ran them.
+  scripts:
+    name: PowerShell
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Parse every script
+        shell: pwsh
+        run: |
+          $failed = $false
+          Get-ChildItem scripts -Filter *.ps1 | ForEach-Object {
+            $errors = $null
+            [System.Management.Automation.Language.Parser]::ParseFile($_.FullName, [ref]$null, [ref]$errors) | Out-Null
+            if ($errors) {
+              Write-Host "::error file=$($_.Name)::$($errors -join '; ')"
+              $failed = $true
+            } else {
+              Write-Host "ok  $($_.Name)"
+            }
+          }
+          if ($failed) { exit 1 }

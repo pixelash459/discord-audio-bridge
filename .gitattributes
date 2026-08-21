@@ -1,0 +1,19 @@
+# Normalise to LF in the repository; check out native line endings.
+* text=auto eol=lf
+
+# PowerShell and the .NET project files are Windows-only and happier with CRLF on disk.
+*.ps1   text eol=crlf
+*.psm1  text eol=crlf
+*.csproj text eol=crlf
+*.sln    text eol=crlf
+*.manifest text eol=crlf
+
+# Never touch binaries.
+*.png  binary
+*.ico  binary
+*.woff2 binary
+*.exe  binary
+*.dll  binary
+
+# Keep generated files out of diffs and language statistics.
+package-lock.json -diff linguist-generated

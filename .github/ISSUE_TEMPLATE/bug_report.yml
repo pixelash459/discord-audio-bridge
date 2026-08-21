@@ -1,0 +1,64 @@
+name: Bug report
+description: Something does not work
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Please run `npm run doctor` and paste the output below. It reports every dependency and
+        the host's audio setup, which answers most of the first round of questions.
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What did you expect, and what happened instead?
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Started the app with `npm run app`
+        2. Picked Spotify under Source
+        3. …
+    validations:
+      required: true
+
+  - type: dropdown
+    id: capture-mode
+    attributes:
+      label: Capture mode
+      options:
+        - Per-application (/stream app)
+        - Output device (/stream device)
+        - DirectShow / virtual cable (/stream dshow)
+        - Not applicable
+    validations:
+      required: true
+
+  - type: textarea
+    id: doctor
+    attributes:
+      label: Output of `npm run doctor`
+      render: text
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant log output
+      description: The Logs tab, or the terminal. Set LOG_LEVEL=debug for more detail.
+      render: text
+
+  - type: input
+    id: windows
+    attributes:
+      label: Windows version
+      description: Run `winver`. Per-process capture needs build 19041 or newer.
+      placeholder: "Windows 11 23H2, build 22631"
+    validations:
+      required: true

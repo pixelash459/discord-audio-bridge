@@ -16,6 +16,7 @@ import {
   type SourceSpec,
 } from '../voice/session.ts';
 import { readConfig, writeConfig, RESTART_REQUIRED_KEYS, type EditableKey } from './envFile.ts';
+import { authStatus, signIn } from '../signin.ts';
 
 const log = logger('api');
 
@@ -54,6 +55,10 @@ export interface Snapshot {
     avatarUrl: string | null;
     wsPing: number | null;
     guildCount: number;
+    /** False before the first successful sign-in; the panel prompts for setup. */
+    hasToken: boolean;
+    signingIn: boolean;
+    signInError: string | null;
   };
   sessions: SessionStatus[];
   capabilities: {
@@ -70,6 +75,8 @@ export interface Snapshot {
 }
 
 export async function buildSnapshot(client: Client): Promise<Snapshot> {
+  const auth = authStatus();
+
   return {
     bot: {
       ready: client.isReady(),
@@ -77,6 +84,9 @@ export async function buildSnapshot(client: Client): Promise<Snapshot> {
       avatarUrl: client.user?.displayAvatarURL({ size: 64 }) ?? null,
       wsPing: client.isReady() ? Math.round(client.ws.ping) : null,
       guildCount: client.guilds.cache.size,
+      hasToken: auth.hasToken,
+      signingIn: auth.attempting,
+      signInError: auth.error,
     },
     sessions: allSessions().map((session) => session.status()),
     capabilities: {
@@ -288,6 +298,12 @@ export async function handleApi(client: Client, req: IncomingMessage, url: URL):
 
       await channel.edit({ bitrate: target, reason: 'Changed from the bridge control panel' });
       return { bitrate: target, maximum: max };
+    }
+
+    case 'POST /api/signin': {
+      // Reachable before the bot has ever signed in - that is the whole point of it.
+      await signIn(client);
+      return { ready: client.isReady(), tag: client.user?.tag ?? null };
     }
 
     case 'GET /api/diagnostics':

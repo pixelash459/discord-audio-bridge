@@ -131,7 +131,9 @@ Prefer no desktop app? `npm start` prints a URL — open it in any browser for t
 1. <https://discord.com/developers/applications> → **New Application**.
 2. **Bot** → *Reset Token* → copy it.
 3. **General Information** → copy the *Application ID*.
-4. Paste both into the panel's **Setup** tab (or into `.env`), and press Save.
+4. Paste both into the panel's **Setup** tab and press Save. The panel starts before sign-in
+   precisely so this works on a fresh clone; saving a token signs in immediately, with no restart.
+   (Editing `.env` by hand does the same job.)
 5. **Installation** → *Guild Install*, scopes `bot` + `applications.commands`, permissions
    **Connect** and **Speak** — plus **Manage Channels** if you want the bot to be able to raise a
    channel's bitrate for you.

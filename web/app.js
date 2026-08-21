@@ -400,6 +400,8 @@ function render(state) {
   ping.hidden = state.bot.wsPing === null;
   if (state.bot.wsPing !== null) ping.textContent = `${state.bot.wsPing} ms`;
 
+  renderOnboarding(state.bot);
+
   const live = session();
   $('live-card').hidden = !live;
   if (!live) return;
@@ -444,12 +446,64 @@ function render(state) {
   }
 }
 
+/**
+ * Before the first successful sign-in the panel is still fully reachable - that is deliberate,
+ * since the Setup tab is where the token gets entered. This banner explains what is missing.
+ */
+function renderOnboarding(bot) {
+  const banner = $('onboarding');
+  if (bot.ready) {
+    banner.hidden = true;
+    return;
+  }
+
+  banner.hidden = false;
+  const action = $('onboarding-action');
+
+  if (bot.signingIn) {
+    banner.className = 'banner';
+    $('onboarding-title').textContent = 'Signing in to Discord…';
+    $('onboarding-detail').textContent = '';
+    action.hidden = true;
+    return;
+  }
+
+  action.hidden = false;
+
+  if (!bot.hasToken) {
+    banner.className = 'banner';
+    $('onboarding-title').textContent = 'No bot token yet';
+    $('onboarding-detail').textContent =
+      'Add your bot token and application ID in Setup, then press Save. Nothing else works until then.';
+    action.textContent = 'Open Setup';
+    action.onclick = () => showTab('setup');
+    return;
+  }
+
+  banner.className = 'banner error';
+  $('onboarding-title').textContent = 'Not signed in to Discord';
+  $('onboarding-detail').textContent = bot.signInError ?? 'Sign-in has not been attempted yet.';
+  action.textContent = 'Try again';
+  action.onclick = () => void attemptSignIn();
+}
+
+async function attemptSignIn() {
+  try {
+    const result = await post('signin');
+    toast(result.ready ? `Signed in as ${result.tag}.` : 'Signed in.', 'ok');
+    await loadGuilds();
+    await loadSources();
+  } catch (error) {
+    fail(error);
+  }
+}
+
 /* ── setup tab ────────────────────────────────────────────────────────────── */
 
 let configLoaded = false;
 
-async function loadConfig() {
-  if (configLoaded) return;
+async function loadConfig(force = false) {
+  if (configLoaded && !force) return;
   try {
     const config = await api('config');
     for (const [key, value] of Object.entries(config.values)) {
@@ -487,6 +541,14 @@ $('save-btn').addEventListener('click', async () => {
       notice.hidden = true;
     }
     toast('Settings saved to .env.', 'ok');
+
+    // The common case on a fresh install: a token was just supplied and the bot is idle.
+    // Sign in now rather than making the restart notice the user's problem.
+    if (!ui.state?.bot.ready && result.secretsSet.DISCORD_TOKEN) {
+      notice.hidden = false;
+      notice.textContent = 'Saved. Signing in to Discord…';
+      await attemptSignIn();
+    }
   } catch (error) {
     fail(error);
   }

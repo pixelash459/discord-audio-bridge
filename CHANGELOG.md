@@ -6,6 +6,15 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Fixed
+
+- The control panel now starts *before* signing in to Discord. It previously started inside the
+  ready handler, so the Setup tab -- the one screen whose purpose is entering a bot token -- was
+  unreachable until a valid token already existed. Saving credentials there signs in immediately
+  via `POST /api/signin`, with no restart.
+- A failed sign-in no longer exits when the panel is available; it leaves the panel up so the
+  problem can be fixed. Headless (`CONTROL_PORT=0`), it still exits non-zero with the reason.
+
 ## [1.0.0]
 
 First release.

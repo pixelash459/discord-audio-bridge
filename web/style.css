@@ -669,3 +669,29 @@ input[type="range"] {
     transition-duration: 0.01ms !important;
   }
 }
+
+/* ── onboarding banner ───────────────────────────────────────────────────── */
+
+.banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 11px 20px;
+  background: color-mix(in srgb, var(--warn) 12%, var(--bg-raised));
+  border-bottom: 1px solid color-mix(in srgb, var(--warn) 40%, transparent);
+  font-size: 13px;
+}
+.banner.error {
+  background: color-mix(in srgb, var(--danger) 12%, var(--bg-raised));
+  border-bottom-color: color-mix(in srgb, var(--danger) 40%, transparent);
+}
+.banner-body {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.banner-body span {
+  color: var(--text-dim);
+}

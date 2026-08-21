@@ -3,6 +3,7 @@ import { Client, Events, GatewayIntentBits, MessageFlags } from 'discord.js';
 import { commandsByName, UserError } from './commands.ts';
 import { config } from './config.ts';
 import { logger } from './logger.ts';
+import { signIn, hasToken } from './signin.ts';
 import { isAudioTapBuilt } from './audio/tap.ts';
 import { ControlServer } from './control/server.ts';
 import { endAllSessions } from './voice/session.ts';
@@ -17,37 +18,13 @@ const client = new Client({
   ],
 });
 
-let control: ControlServer | undefined;
-
-client.once(Events.ClientReady, async (ready) => {
+client.once(Events.ClientReady, (ready) => {
   log.info(`logged in as ${ready.user.tag}`);
   log.info(
     isAudioTapBuilt()
       ? 'AudioTap is built - per-app and per-device capture available'
       : 'AudioTap is NOT built - only DirectShow sources will work (run: npm run build:native)',
   );
-
-  if (config.control.port <= 0) {
-    log.info('control panel disabled (CONTROL_PORT=0)');
-    return;
-  }
-
-  control = new ControlServer(ready, config.control.port);
-  try {
-    await control.start();
-    process.stdout.write(`\n  Control panel:  ${control.url}\n\n`);
-    if (config.control.autoOpen) {
-      const { spawn } = await import('node:child_process');
-      spawn('cmd', ['/c', 'start', '', control.url], { windowsHide: true, detached: true }).unref();
-    }
-  } catch (error) {
-    control = undefined;
-    log.error(
-      `control panel could not start on port ${config.control.port} ` +
-        '(is another copy already running?). The bot keeps working via slash commands.',
-      error,
-    );
-  }
 });
 
 client.on(Events.InteractionCreate, async (interaction) => {
@@ -88,6 +65,57 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
 client.on(Events.Error, (error) => log.error('client error', error));
 
+/* ── startup ──────────────────────────────────────────────────────────────── */
+
+let control: ControlServer | undefined;
+
+// The control panel comes up BEFORE sign-in, on purpose. Its Setup tab is where you enter the bot
+// token, so gating it behind a successful sign-in would mean needing a token to enter a token.
+if (config.control.port > 0) {
+  control = new ControlServer(client, config.control.port);
+  try {
+    await control.start();
+    process.stdout.write(`\n  Control panel:  ${control.url}\n\n`);
+
+    if (config.control.autoOpen) {
+      const { spawn } = await import('node:child_process');
+      spawn('cmd', ['/c', 'start', '', control.url], { windowsHide: true, detached: true }).unref();
+    }
+  } catch (error) {
+    control = undefined;
+    log.error(
+      `control panel could not start on port ${config.control.port} ` +
+        '(is another copy already running?)',
+      error,
+    );
+  }
+} else {
+  log.info('control panel disabled (CONTROL_PORT=0)');
+}
+
+// A failed sign-in is not fatal while the panel is up: it is the one screen that can fix it.
+// Headless, there is nothing to fix it with, so exit and say why.
+try {
+  await signIn(client);
+} catch (error) {
+  const reason = error instanceof Error ? error.message : String(error);
+
+  if (!control) {
+    log.error(`could not sign in to Discord: ${reason}`);
+    log.error(
+      hasToken()
+        ? 'Fix DISCORD_TOKEN in .env and start again.'
+        : 'Put DISCORD_TOKEN and DISCORD_APP_ID in .env (copy .env.example), then start again.',
+    );
+    process.exit(1);
+  }
+
+  log.warn(`not signed in: ${reason}`);
+  log.warn(`Open the control panel and finish setup there: ${control.url}`);
+}
+
+/* ── shutdown ─────────────────────────────────────────────────────────────── */
+
 let shuttingDown = false;
 async function shutdown(signal: string): Promise<void> {
   if (shuttingDown) return;
@@ -107,24 +135,9 @@ for (const signal of ['SIGINT', 'SIGTERM', 'SIGHUP'] as const) {
 process.on('unhandledRejection', (error) => log.error('unhandled rejection', error));
 
 // Node's default for an uncaught exception is to crash. Logging without exiting would leave the
-// process alive in an undefined state - and, worse, exiting 0 makes a fatal startup failure look
-// like a clean shutdown to whatever launched us.
+// process alive in an undefined state - and exiting 0 would make a fatal failure look to whatever
+// launched us like a clean shutdown.
 process.on('uncaughtException', (error) => {
   log.error('uncaught exception - shutting down', error);
   process.exit(1);
 });
-
-try {
-  await client.login(config.discord.token);
-} catch (error) {
-  const reason = error instanceof Error ? error.message : String(error);
-  const hint = /token|unauthorized|401/i.test(reason)
-    ? 'DISCORD_TOKEN looks wrong. Reset it under Bot in the Discord developer portal and paste the new one into .env.'
-    : /intent|disallowed/i.test(reason)
-      ? 'Discord rejected the gateway intents. This bot needs only Guilds and GuildVoiceStates, neither of which is privileged.'
-      : 'Check your network connection and that Discord is reachable.';
-
-  log.error(`could not sign in to Discord: ${reason}`);
-  log.error(hint);
-  process.exit(1);
-}

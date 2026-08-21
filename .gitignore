@@ -10,20 +10,25 @@ node_modules/
 *.log
 logs/
 npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+*.tsbuildinfo
+coverage/
 
 # ---- .NET build output ----
 bin/
 obj/
-native/AudioTap/bin/
-native/AudioTap/obj/
-desktop/BridgeApp/bin/
-desktop/BridgeApp/obj/
 
 # ---- editors / os ----
 .vs/
+.vscode/
+*.code-workspace
 .idea/
 *.user
 *.suo
+*.swp
+*~
 Thumbs.db
 desktop.ini
 .DS_Store

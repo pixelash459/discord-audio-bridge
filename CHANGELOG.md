@@ -6,22 +6,47 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Fixed
+
+- The desktop source picker no longer crashes with `state is not defined`; process, output-device,
+  and DirectShow source lists now render from the latest control snapshot.
+- Windows release ZIPs now contain a self-contained AudioTap helper instead of an apphost missing
+  its managed DLLs, so per-app and device capture work without a separate .NET installation.
+- Packaged builds register slash commands directly through Discord rather than trying to execute
+  an npm script and source file that are not shipped.
+- Packaged configuration is written to the writable runtime state directory, and per-user Linux
+  settings correctly override the system-wide environment file while real environment variables
+  remain highest priority.
+- The PipeWire pacer now genuinely primes and re-primes its jitter reserve, preserves complete
+  channel frames, and does not burst missed ticks after downstream backpressure.
+- Linux shutdown always cleans orphaned `pw-record` children, and PipeWire capability detection is
+  cached instead of synchronously launching probe processes for every panel snapshot.
+- Debian/Ubuntu guidance and package metadata now use `pipewire-bin` (which supplies `pw-record` and
+  `pw-dump` there); Fedora guidance continues to use `pipewire-utils`.
+- nFPM dependency overrides now use its supported schema, and release CI executes the packaged
+  AudioTap binary before accepting a Windows artifact.
+
+### Documentation
+
+- Reconciled every project Markdown file with the current Windows/Linux runtime, local and remote
+  controls, package filenames, security boundaries, configuration precedence, and CI matrix.
+- Added a Linux VM validation checklist and replaced placeholder or obsolete repository links.
+
+## [1.1.0] - 2026-08-22
+
 ### Added
 
 - **Linux support.** Per-application capture on Linux via PipeWire: `pw-record --raw --target`
-  pulls 48 kHz float from any one application's stream node, and a TypeScript pacer
-  (the counterpart of AudioTap's PacedWriter) keeps the stream perfectly real time — silence
-  fill while the app is idle, drift trimming, and live metering. Device capture targets a sink's
-  monitor. Everything else (panel, remote dashboard, slash commands, encoding) is unchanged.
-- **Single-file executables and installers.** `npm run package` bundles the bot with esbuild and
-  embeds it into a Node single executable (`--build-sea`), producing a Windows x64 zip, Linux
-  x64/arm64 tarballs, `.deb`, `.rpm`, and AppImages. Tagging a version publishes all of them as a
-  GitHub Release via CI. The packaged binary supports `--doctor`, `--version`, and
-  `--project-root`; runtime state lands in `~/.local/state/discord-audio-bridge` (or
-  `%APPDATA%`) when the install root is read-only, and Linux packages read
-  `/etc/discord-audio-bridge/env` for system-wide configuration.
-- The smoke test now exercises the pacer for real: real-time pacing accuracy, silence fill, and
-  dBFS metering against a synthetic sine.
+  pulls 48 kHz float from an application's output-stream node, and a TypeScript pacer (the
+  counterpart of AudioTap's PacedWriter) provides priming, silence fill, drift trimming, and live
+  metering. Device capture targets a sink monitor.
+- **Single-file bot executables and installers.** `npm run package` bundles the bot with esbuild and
+  embeds it into a Node single executable (`--build-sea`), producing a Windows x64 ZIP and Linux
+  x64/arm64 tarballs, `.deb`, `.rpm`, and AppImages. The packaged binary supports `--doctor`,
+  `--version`, and `--project-root`; runtime state moves to the per-user state directory when the
+  install root is read-only, and Linux packages can read `/etc/discord-audio-bridge/env`.
+- The smoke test exercises real-time pacer accuracy, silence fill, and dBFS metering against a
+  synthetic sine.
 
 ### Fixed
 
@@ -34,7 +59,7 @@ All notable changes to this project are documented here. The format follows
 - A failed sign-in no longer exits when the panel is available; it leaves the panel up so the
   problem can be fixed. Headless (`CONTROL_PORT=0`), it still exits non-zero with the reason.
 
-## [1.0.0]
+## 1.0.0 - 2026-08-22
 
 First release.
 
@@ -63,5 +88,5 @@ First release.
 - ffmpeg's Ogg muxer defaults to one-second pages, which starves the Discord player. This project
   sets `-page_duration 20000`; measured, that is 163 ms to first packet versus 3186 ms.
 
-[Unreleased]: https://github.com/OWNER/discord-audio-bridge/compare/v1.0.0...HEAD
-[1.0.0]: https://github.com/OWNER/discord-audio-bridge/releases/tag/v1.0.0
+[Unreleased]: https://github.com/AshutoshChaudhary-lgtm/discord-audio-bridge/compare/v1.1.0...HEAD
+[1.1.0]: https://github.com/AshutoshChaudhary-lgtm/discord-audio-bridge/releases/tag/v1.1.0

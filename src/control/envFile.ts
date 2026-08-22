@@ -1,9 +1,10 @@
-import { readFileSync, writeFileSync, existsSync } from 'node:fs';
-import { join } from 'node:path';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
 
-import { projectRoot } from '../config.ts';
+import { runtimeRoot } from '../config.ts';
 
-const envPath = join(projectRoot, '.env');
+// Development uses the checkout; read-only packages use the per-user runtime directory.
+const envPath = join(runtimeRoot, '.env');
 
 /** Keys the control panel is allowed to read and write. Anything else stays out of reach. */
 export const EDITABLE_KEYS = [
@@ -118,6 +119,7 @@ export function writeConfig(updates: Partial<Record<EditableKey, string>>): void
     rewritten.push(...additions);
   }
 
+  mkdirSync(dirname(envPath), { recursive: true });
   writeFileSync(envPath, `${rewritten.join('\n').replace(/\n+$/, '')}\n`, 'utf8');
 
   // Reflect the change in the running process so anything reading process.env sees it. Values that

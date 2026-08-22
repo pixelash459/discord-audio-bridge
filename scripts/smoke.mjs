@@ -29,6 +29,7 @@ const modules = [
   '../src/control/api.ts',
   '../src/control/envFile.ts',
   '../src/remote/server.ts',
+  '../src/registration.ts',
   '../src/doctor.ts',
 ];
 
@@ -43,6 +44,85 @@ for (const specifier of modules) {
     process.stdout.write(`  FAIL  ${specifier.replace('../', '')}\n`);
     process.stdout.write(`        ${error instanceof Error ? error.stack : String(error)}\n`);
   }
+}
+
+// A real-time producer must be allowed to build the configured jitter reserve. The old Linux
+// pacer consumed each 20 ms frame as soon as it arrived, so it never actually primed outside the
+// synthetic all-at-once burst used by the pacing test later in this file.
+{
+  const { PassThrough } = await import('node:stream');
+  const { Pacer } = await import(new URL('../src/audio/pacer.ts', import.meta.url).href);
+  const source = new PassThrough();
+  const pacer = new Pacer(source, { sampleRate: 48_000, channels: 2, targetMs: 100 });
+  const frame = new Float32Array(48_000 * 2 * 0.02).fill(0.25);
+  let outputBytes = 0;
+  let firstAudibleMs = Infinity;
+  pacer.stream.on('data', (chunk) => {
+    if (firstAudibleMs === Infinity) {
+      const samples = new Float32Array(chunk.buffer, chunk.byteOffset, chunk.length / 4);
+      if (samples.some((sample) => sample !== 0)) {
+        firstAudibleMs = (outputBytes / (48_000 * 2 * 4)) * 1000;
+      }
+    }
+    outputBytes += chunk.length;
+  });
+  const feeder = setInterval(() => source.write(Buffer.from(frame.buffer)), 20);
+  await new Promise((resolve) => setTimeout(resolve, 620));
+  clearInterval(feeder);
+  await pacer.close();
+
+  if (firstAudibleMs < 80) {
+    failed++;
+    process.stdout.write(
+      `  FAIL  pacer jitter priming (first audio ${firstAudibleMs.toFixed(0)}ms)\n`,
+    );
+  } else {
+    process.stdout.write(`  ok    pacer jitter priming (${firstAudibleMs.toFixed(0)}ms reserve)\n`);
+  }
+}
+
+const tapSource = await readFile(new URL('../src/audio/tap.ts', import.meta.url), 'utf8');
+const envSource = await readFile(new URL('../src/control/envFile.ts', import.meta.url), 'utf8');
+const apiSource = await readFile(new URL('../src/control/api.ts', import.meta.url), 'utf8');
+const packageSource = await readFile(new URL('./package.mjs', import.meta.url), 'utf8');
+const envExample = await readFile(new URL('../.env.example', import.meta.url), 'utf8');
+if (
+  /if \(children\.length === 0\) return;[\s\S]{0,800}closeAllPipedTaps/.test(tapSource) ||
+  !envSource.includes("join(runtimeRoot, '.env')") ||
+  apiSource.includes("runScript('register')") ||
+  !packageSource.includes('readdirSync(audioTapDir') ||
+  !packageSource.includes('`overrides:`')
+) {
+  failed++;
+  process.stdout.write('  FAIL  packaged runtime regression contracts\n');
+} else {
+  process.stdout.write('  ok    packaged runtime regression contracts\n');
+}
+
+const markdown = await Promise.all(
+  [
+    '../README.md',
+    '../CHANGELOG.md',
+    '../CONTRIBUTING.md',
+    '../CODE_OF_CONDUCT.md',
+    '../SECURITY.md',
+    '../docs/cross-platform.md',
+  ].map((path) => readFile(new URL(path, import.meta.url), 'utf8')),
+);
+const documentation = markdown.join('\n');
+if (
+  /github\.com\/(?:OWNER|<owner>)/i.test(documentation) ||
+  /apt install pipewire-utils/i.test(documentation) ||
+  documentation.includes('docs.discord.food') ||
+  documentation.includes('npm run dist') ||
+  !documentation.includes('pipewire-bin') ||
+  !packageSource.includes('pipewire-bin | pipewire') ||
+  !envExample.includes('relative to the writable runtime root')
+) {
+  failed++;
+  process.stdout.write('  FAIL  documentation matches current platform contracts\n');
+} else {
+  process.stdout.write('  ok    documentation matches current platform contracts\n');
 }
 
 // A cheap guard against the encoder losing a setting that is easy to drop and painful to debug.
@@ -115,6 +195,16 @@ if (!/\[hidden\]\s*\{[^}]*display:\s*none\s*!important\s*;/s.test(stylesheet)) {
 // The control socket can open before Discord is ready. Keep a guard against regressing to a UI
 // that permanently caches the empty pre-ready guild list.
 const webApp = await readFile(new URL('../web/app.js', import.meta.url), 'utf8');
+if (webApp.includes("if (state.capabilities?.platform === 'linux')")) {
+  failed++;
+  process.stdout.write('  FAIL  source renderer uses snapshot state safely\n');
+} else if (!webApp.includes("ui.state?.capabilities?.platform === 'linux'")) {
+  failed++;
+  process.stdout.write('  FAIL  source renderer uses snapshot state safely\n');
+} else {
+  process.stdout.write('  ok    source renderer uses snapshot state safely\n');
+}
+
 if (!/becameReady[\s\S]*if \(becameReady\) void loadGuilds\(\)/.test(webApp)) {
   failed++;
   process.stdout.write('  FAIL  web guild refresh on bot readiness\n');

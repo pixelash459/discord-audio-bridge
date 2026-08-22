@@ -1,8 +1,9 @@
 # Cross-platform: the decisions, and why
 
-How this project runs on both Windows and Linux without giving anything up on either. Everything
-here was validated empirically before being committed — the build pipeline was proven against the
-real `@discordjs/voice` → davey chain on a live Windows host before a line of it landed in `src/`.
+How the project maps the same capture/encode/Discord pipeline onto Windows and Linux. The Windows
+audio path and packaged ZIP have been exercised on a live host. Linux source imports and the pacer
+are covered by automated tests; the checklist below is the remaining real-PipeWire and package
+validation to perform on a Linux VM with an active desktop audio session.
 
 ## Capture: the best each OS has to offer
 
@@ -32,24 +33,22 @@ sink itself when no monitor node exists) before spawning anything.
 
 ## Voice stack: why the core did not get rewritten
 
-Discord has required DAVE end-to-end encryption on voice since March 2026 (non-compliant clients
-are disconnected with close code 4017). `@discordjs/voice` 0.19.2+ implements DAVE through
-`@snazzah/davey`. No Rust (serenity/songbird) or other alternative stack was verifiably DAVE-
-compliant at decision time, so rewriting the core in a "more shippable" language would have
-traded a working voice connection for nicer binaries. The bot stays TypeScript on Node, and the
-distribution problem is solved at the packaging layer instead.
+Discord requires DAVE end-to-end encryption for non-Stage voice calls and disconnects unsupported
+clients with close code 4017. `@discordjs/voice` 0.19.2+ implements DAVE through
+`@snazzah/davey`, so the working TypeScript voice stack remains in place and distribution is solved
+at the packaging layer instead of by rewriting the voice implementation.
 
 ## Distribution: one executable per platform
 
-The deliverable is a single-file executable per OS/arch plus system packages, built by
-`scripts/package.mjs`:
+The bot itself becomes one executable per OS/architecture, accompanied by its web assets and the
+davey runtime tree. `scripts/package.mjs` produces these layouts:
 
 | Artifact | Contents |
 | --- | --- |
-| `windows-x64.zip` | `discord-audio-bridge.exe`, `AudioTap.exe`, panels, davey runtime tree |
-| `linux-x64/arm64.tar.gz` | same layout, portable |
-| `.deb` / `.rpm` | FHS layout; wrapper at `/usr/bin`, assets under `/usr/share`, binary under `/usr/lib`; depends on `pipewire-utils`, recommends `ffmpeg` |
-| `.AppImage` | the FHS layout wrapped with an `AppRun` |
+| `discord-audio-bridge-<version>-windows-amd64.zip` | `discord-audio-bridge.exe`, self-contained `AudioTap.exe`, both panels, and the davey runtime tree |
+| `discord-audio-bridge-<version>-linux-{amd64,arm64}.tar.gz` | Portable Linux layout with the bot executable, panels, and davey runtime tree |
+| `.deb` / `.rpm` with the same base name | FHS layout: wrapper in `/usr/bin`, binary/runtime under `/usr/lib`, assets under `/usr/share`; Debian uses `pipewire-bin`, Fedora uses `pipewire-utils`, and ffmpeg is recommended |
+| `discord-audio-bridge-<version>-linux-{amd64,arm64}.AppImage` | The FHS layout wrapped with `AppRun` |
 
 The pipeline is esbuild → Node `--build-sea`:
 
@@ -71,7 +70,8 @@ Runtime details that make packaged installs behave:
 
 - **Project root discovery** walks up from the executable (or `BRIDGE_PROJECT_ROOT`, set by the
   distro wrappers) to find `web/index.html`.
-- **Writable state** moves to `~/.local/state/discord-audio-bridge` (Linux) or
+- **Writable state** moves to `$XDG_STATE_HOME/discord-audio-bridge` when set, otherwise
+  `~/.local/state/discord-audio-bridge` (Linux), or
   `%APPDATA%\discord-audio-bridge` (Windows) whenever the install root is read-only — that is
   where `.control-token`, `.remote-token`, `logs/`, and the editable `.env` live.
 - **System configuration**: Linux packages also read `/etc/discord-audio-bridge/env`; the
@@ -81,7 +81,94 @@ Runtime details that make packaged installs behave:
 
 ## CI
 
-`check` (typecheck + smoke on Node 22.18 and 26), `native` (Windows AudioTap/desktop builds),
-and `package` (windows-x64, linux-x64, linux-arm64 — arm64 runs on GitHub's free
-`ubuntu-24.04-arm` runners) run on every push. A `v*` tag additionally collects every package
-artifact into a GitHub Release.
+`check` (typecheck + smoke on Node 22.18 and 26), `native` (Windows AudioTap/desktop builds), and
+`package` (Windows x64, Linux x64, and Linux arm64) run for pull requests, pushes to `main`, version
+tags, and manual dispatches. Linux arm64 uses GitHub's `ubuntu-24.04-arm` hosted runner. A `v*` tag
+also collects every package artifact into a GitHub Release.
+
+## Linux VM validation checklist
+
+Use a VM with a desktop session, an emulated or passed-through output device, PipeWire, and
+WirePlumber. A headless server VM cannot validate application or sink capture meaningfully.
+
+### 1. Verify the host tools
+
+Debian/Ubuntu:
+
+```bash
+sudo apt update
+sudo apt install ffmpeg pipewire-bin
+```
+
+Fedora:
+
+```bash
+sudo dnf install ffmpeg-free pipewire-utils
+```
+
+Then, as the logged-in desktop user (not through `sudo`):
+
+```bash
+node --version                 # 22.18+ to run from source; 26+ to build packages
+ffmpeg -hide_banner -h encoder=libopus
+pw-record --version
+pw-dump --version
+systemctl --user --no-pager status pipewire wireplumber
+```
+
+### 2. Validate the checkout
+
+```bash
+git clone https://github.com/AshutoshChaudhary-lgtm/discord-audio-bridge
+cd discord-audio-bridge
+npm ci
+cp .env.example .env
+npm run typecheck
+npm run smoke
+npm run doctor
+```
+
+Start audio in a normal desktop application before running `doctor`. Its output should list at
+least one application stream and one render endpoint. If it does not, verify that `pw-dump Node`
+contains `Stream/Output/Audio` and `Audio/Sink` nodes in the same terminal session.
+
+### 3. Validate Discord and both panels
+
+Fill in `.env`, run `npm start`, and open the printed loopback URL. Verify that application and
+device sources render, a stream joins the chosen voice channel, meters move, gain and Opus bitrate
+changes take effect, and **Mute bot** changes the bot's Discord voice state. From another LAN or
+Tailscale device, open one of the printed remote URLs and verify source/destination selection,
+retargeting, mute, gain, bitrate, and stop.
+
+Pause and resume the source to exercise silence fill. Stop the stream and exit the bot, then check
+that no helper was orphaned:
+
+```bash
+pgrep -af pw-record || true
+```
+
+### 4. Validate the Linux package layout
+
+Package generation requires Node 26+ because it uses `node --build-sea`:
+
+```bash
+npm run package
+./dist/stage/discord-audio-bridge/discord-audio-bridge --version
+./dist/stage/discord-audio-bridge/discord-audio-bridge --doctor
+tar -tzf dist/release/discord-audio-bridge-*-linux-*.tar.gz | head
+```
+
+The tarball is always produced. `.deb`, `.rpm`, and AppImage outputs are produced only when `nfpm`
+and/or `appimagetool` are on `PATH`; CI installs both. For a `.deb` test, install the generated file
+with `sudo apt install ./dist/release/*.deb`, run `discord-audio-bridge --doctor` as the desktop user,
+and confirm editable state appears under `$XDG_STATE_HOME/discord-audio-bridge` (when set) or
+`~/.local/state/discord-audio-bridge`, rather than under `/usr/share`.
+
+## Current external references
+
+- [Discord voice connections and DAVE](https://docs.discord.com/developers/topics/voice-connections)
+- [Discord voice close codes](https://docs.discord.com/developers/topics/opcodes-and-status-codes)
+- [Node.js built-in TypeScript support](https://nodejs.org/api/typescript.html)
+- [Ubuntu `pipewire-bin` file list](https://packages.ubuntu.com/noble/all/pipewire-bin/filelist)
+- [Fedora `pipewire-utils`](https://packages.fedoraproject.org/pkgs/pipewire/pipewire-utils/)
+- [GitHub-hosted runner labels](https://docs.github.com/en/actions/reference/runners/github-hosted-runners)

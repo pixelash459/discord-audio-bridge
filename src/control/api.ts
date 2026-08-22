@@ -19,6 +19,7 @@ import {
 import { readConfig, writeConfig, RESTART_REQUIRED_KEYS, type EditableKey } from './envFile.ts';
 import { authStatus, signIn } from '../signin.ts';
 import { remoteAccessInfo } from '../remote/server.ts';
+import { registerCommands } from '../registration.ts';
 
 const log = logger('api');
 
@@ -82,6 +83,7 @@ export interface Snapshot {
 
 export async function buildSnapshot(client: Client): Promise<Snapshot> {
   const auth = authStatus();
+  const backend = captureBackend();
 
   return {
     bot: {
@@ -97,8 +99,8 @@ export async function buildSnapshot(client: Client): Promise<Snapshot> {
     sessions: allSessions().map((session) => session.status()),
     capabilities: {
       platform: process.platform,
-      captureBackend: captureBackend(),
-      audioTapBuilt: isAudioTapBuilt(),
+      captureBackend: backend,
+      audioTapBuilt: backend !== null,
       audioTapPath: config.paths.audioTap,
       ffmpegPath: config.paths.ffmpeg,
       logFile: config.paths.logFile ?? null,
@@ -201,7 +203,7 @@ function runScript(script: string): Promise<{ ok: boolean; output: string }> {
   return new Promise((done) => {
     const started = performance.now();
     if (script === 'build:native' && !IS_WINDOWS) {
-      done({ ok: false, output: 'Building AudioTap is Windows-only. On Linux, install pipewire-utils instead.' });
+      done({ ok: false, output: 'Building AudioTap is Windows-only. On Linux, install pipewire-bin (Debian/Ubuntu) or pipewire-utils (Fedora) instead.' });
       return;
     }
     log.info(`starting npm script: ${script}`);
@@ -286,7 +288,7 @@ export async function handleApi(client: Client, req: IncomingMessage, url: URL):
           409,
           IS_WINDOWS
             ? 'AudioTap is not built, so only DirectShow sources work. Build it from the Setup tab.'
-            : 'The PipeWire capture tools are missing, so nothing is capturable. Install pipewire-utils on the host.',
+            : 'The PipeWire capture tools are missing, so nothing is capturable. Install pipewire-bin on Debian/Ubuntu or pipewire-utils on Fedora.',
         );
       }
 
@@ -393,7 +395,17 @@ export async function handleApi(client: Client, req: IncomingMessage, url: URL):
       return runScript('build:native');
 
     case 'POST /api/setup/register-commands':
-      return runScript('register');
+      try {
+        const result = await registerCommands();
+        return {
+          ok: true,
+          output: `Registered ${result.count} commands ${result.scope}: ${result.names.join(', ')}`,
+        };
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        log.error('command registration failed', error);
+        return { ok: false, output: message };
+      }
 
     default:
       throw new ApiError(404, `No route for ${route}.`);

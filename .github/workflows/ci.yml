@@ -114,6 +114,11 @@ jobs:
 
       - run: npm ci
 
+      - uses: actions/setup-dotnet@v4
+        if: runner.os == 'Windows'
+        with:
+          dotnet-version: '9.0.x'
+
       - name: Build AudioTap
         if: runner.os == 'Windows'
         run: npm run build:native
@@ -148,6 +153,10 @@ jobs:
           "$exe" --version
           "$exe" --doctor > doctor.log 2>&1 || { cat doctor.log; exit 1; }
           grep -q "ffmpeg" doctor.log
+          if [[ "$RUNNER_OS" == "Windows" ]]; then
+            dist/stage/discord-audio-bridge/AudioTap.exe --list-devices > devices.json
+            node -e "JSON.parse(require('fs').readFileSync('devices.json', 'utf8'))"
+          fi
 
       - uses: actions/upload-artifact@v4
         with:

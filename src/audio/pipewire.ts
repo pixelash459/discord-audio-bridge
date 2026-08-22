@@ -9,6 +9,7 @@ import { Pacer } from './pacer.ts';
 import type { CaptureTap, DeviceInfo, ProcessInfo, RawFormat, TapOptions, TapStats } from './tap.ts';
 
 const log = logger('pipewire');
+let availability: boolean | undefined;
 
 interface PwNode {
   id: number;
@@ -22,8 +23,17 @@ const nodeName = (node: PwNode): string => String(props(node)['node.name'] ?? ''
 const nodeState = (node: PwNode): string => node.state ?? node.info?.state ?? '';
 
 export function pipewireAvailable(): boolean {
-  const probe = spawnSync(config.paths.pwRecord, ['--version'], { encoding: 'utf8', windowsHide: true });
-  return !probe.error;
+  if (availability !== undefined) return availability;
+  const record = spawnSync(config.paths.pwRecord, ['--version'], {
+    encoding: 'utf8',
+    windowsHide: true,
+  });
+  const dump = spawnSync(config.paths.pwDump, ['--version'], {
+    encoding: 'utf8',
+    windowsHide: true,
+  });
+  availability = !record.error && record.status === 0 && !dump.error && dump.status === 0;
+  return availability;
 }
 
 async function run(command: string, args: string[], timeoutMs = 10_000): Promise<string> {

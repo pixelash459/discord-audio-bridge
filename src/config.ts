@@ -1,5 +1,6 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
+import { parseEnv } from 'node:util';
 
 import { IS_LINUX, isWritable, userStateDir } from './platform.ts';
 
@@ -40,26 +41,15 @@ export const projectRoot = findProjectRoot();
 export const runtimeRoot = isWritable(projectRoot) ? projectRoot : userStateDir();
 
 function loadEnvFiles(paths: string[]): void {
+  // Preserve variables supplied by the launching environment, while allowing each later file to
+  // override an earlier, lower-precedence file.
+  const external = new Set(Object.keys(process.env));
   for (const path of paths) {
     if (!existsSync(path)) continue;
-    // Parsed by hand rather than process.loadEnvFile so real environment variables always win,
-    // no matter which file is loaded first.
-    for (const [key, value] of parseEnvFile(readFileSync(path, 'utf8'))) {
-      if (!(key in process.env)) process.env[key] = value;
+    for (const [key, value] of Object.entries(parseEnv(readFileSync(path, 'utf8')))) {
+      if (!external.has(key)) process.env[key] = value;
     }
   }
-}
-
-function parseEnvFile(text: string): [string, string][] {
-  const entries: [string, string][] = [];
-  for (const line of text.split(/\r?\n/)) {
-    const trimmed = line.trim();
-    if (!trimmed || trimmed.startsWith('#')) continue;
-    const equals = trimmed.indexOf('=');
-    if (equals === -1) continue;
-    entries.push([trimmed.slice(0, equals).trim(), trimmed.slice(equals + 1).trim()]);
-  }
-  return entries;
 }
 
 // A system-wide file for packaged installs, then the checkout's own .env. The checkout wins for

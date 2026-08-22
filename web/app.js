@@ -146,9 +146,9 @@ async function loadSources() {
 function renderSources() {
   $('source-hint').textContent = SOURCE_HINTS[ui.sourceKind];
   $('tap-missing').hidden = ui.sources.audioTapBuilt || ui.sourceKind === 'dshow';
-  if (state.capabilities?.platform === 'linux') {
+  if (ui.state?.capabilities?.platform === 'linux') {
     $('tap-missing-text').textContent =
-      'The PipeWire capture tools are missing, so per-app capture is unavailable. Install them on the host (e.g. "apt install pipewire-utils"), then restart the bridge.';
+      'The PipeWire capture tools are missing, so per-app capture is unavailable. Install them on the host (for example, "apt install pipewire-bin"), then restart the bridge.';
   }
 
   const list = $('source-list');

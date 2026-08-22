@@ -6,9 +6,18 @@
 //
 // Linux artifacts beyond the tarball (deb, rpm, AppImage) need nfpm / appimagetool on PATH; CI
 // installs them, and locally a missing tool is skipped with a warning rather than a failure so
-// `npm run dist` remains useful for a quick local build.
+// `npm run package` remains useful for a quick local build.
 import { execFileSync, spawnSync } from 'node:child_process';
-import { chmodSync, cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  chmodSync,
+  cpSync,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -35,6 +44,27 @@ run(process.execPath, [fileURLToPath(new URL('./build-sea.mjs', import.meta.url)
 const binaryName = IS_WINDOWS ? 'discord-audio-bridge.exe' : 'discord-audio-bridge';
 const binary = join(dist, binaryName);
 if (!existsSync(binary)) throw new Error(`expected ${binary} to exist after the SEA build`);
+
+// Release ZIPs must work on a clean Windows installation. The development helper stays small
+// and framework-dependent, while the packaged copy embeds the .NET runtime into one executable.
+let packagedAudioTapDir;
+if (IS_WINDOWS) {
+  packagedAudioTapDir = join(dist, 'audio-tap');
+  rmSync(packagedAudioTapDir, { recursive: true, force: true });
+  run('dotnet', [
+    'publish',
+    join(root, 'native', 'AudioTap', 'AudioTap.csproj'),
+    '--configuration', 'Release',
+    '--runtime', 'win-x64',
+    '--self-contained', 'true',
+    '--output', packagedAudioTapDir,
+    '--nologo',
+    '-p:PublishSingleFile=true',
+    '-p:EnableCompressionInSingleFile=true',
+    '-p:DebugType=none',
+    '-p:GenerateDocumentationFile=false',
+  ]);
+}
 
 /* ── external node_modules tree (davey and friends) ───────────────────────── */
 
@@ -79,13 +109,16 @@ for (const pkgName of externalPackages()) {
 if (!IS_WINDOWS) chmodSync(join(stage, binaryName), 0o755);
 
 if (IS_WINDOWS) {
-  const audioTap = join(root, 'native', 'AudioTap', 'bin', 'AudioTap.exe');
+  const audioTapDir = packagedAudioTapDir;
+  const audioTap = join(audioTapDir, 'AudioTap.exe');
   if (!existsSync(audioTap)) {
-    throw new Error('AudioTap.exe is missing — run "npm run build:native" before packaging.');
+    throw new Error('The self-contained AudioTap publish did not produce AudioTap.exe.');
   }
-  // Framework-dependent by design: self-contained .NET would add ~70 MB for a helper that only
-  // runs on machines whose user is doing Windows audio work anyway.
-  cpSync(audioTap, join(stage, 'AudioTap.exe'));
+  // PublishSingleFile normally leaves only the executable, but copy any additional runtime files
+  // the .NET SDK considers necessary rather than assuming the output shape forever.
+  for (const entry of readdirSync(audioTapDir, { withFileTypes: true })) {
+    if (entry.isFile()) cpSync(join(audioTapDir, entry.name), join(stage, entry.name));
+  }
 }
 
 /* ── produce the platform archives ────────────────────────────────────────── */
@@ -158,15 +191,19 @@ async function packageLinux() {
         `vendor: discord-audio-bridge`,
         `license: MIT`,
         `homepage: https://github.com/AshutoshChaudhary-lgtm/discord-audio-bridge`,
-        `deb:`,
-        `  depends:`,
-        `    - pipewire-utils | pipewire`,
-        `  recommends:`,
-        `    - ffmpeg`,
+        `overrides:`,
+        `  deb:`,
+        `    depends:`,
+        `      - pipewire-bin | pipewire`,
+        `    recommends:`,
+        `      - ffmpeg`,
+        `  rpm:`,
+        `    depends:`,
+        `      - pipewire-utils`,
+        `    recommends:`,
+        `      - ffmpeg`,
         `rpm:`,
         `  group: Applications/Sound`,
-        `  depends:`,
-        `    - pipewire-utils`,
         `contents:`,
         `  - src: ${join(lib, binaryName).replaceAll('\\', '/')}`,
         `    dst: /usr/lib/discord-audio-bridge/${binaryName}`,

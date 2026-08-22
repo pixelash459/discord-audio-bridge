@@ -190,7 +190,7 @@ const stream: Command = {
         throw new UserError(
           IS_WINDOWS
             ? 'Per-app capture needs the AudioTap helper. Run `npm run build:native` on the host (requires the .NET SDK), or use `/stream dshow` with a virtual cable instead.'
-            : 'Per-app capture needs the PipeWire tools (pw-record). Install them on the host, e.g. `apt install pipewire-utils`, then try again.',
+            : 'Per-app capture needs the PipeWire tools (pw-record). On Debian/Ubuntu run `apt install pipewire-bin`; on Fedora run `dnf install pipewire-utils`.',
         );
       }
 
@@ -217,7 +217,7 @@ const stream: Command = {
         throw new UserError(
           IS_WINDOWS
             ? 'Device capture needs the AudioTap helper. Run `npm run build:native` on the host, or use `/stream dshow` instead.'
-            : 'Device capture needs the PipeWire tools (pw-record). Install them on the host, e.g. `apt install pipewire-utils`, then try again.',
+            : 'Device capture needs the PipeWire tools (pw-record). On Debian/Ubuntu run `apt install pipewire-bin`; on Fedora run `dnf install pipewire-utils`.',
         );
       }
 
@@ -460,7 +460,7 @@ const sources: Command = {
         name: 'Applications and devices',
         value: IS_WINDOWS
           ? 'Unavailable — AudioTap is not built. Run `npm run build:native` on the host.'
-          : 'Unavailable — the PipeWire tools are missing. Install them, e.g. `apt install pipewire-utils`.',
+          : 'Unavailable — the PipeWire tools are missing. Install `pipewire-bin` on Debian/Ubuntu or `pipewire-utils` on Fedora.',
       });
     }
 
@@ -529,7 +529,7 @@ export async function collectDiagnostics(): Promise<string> {
     capture.push(
       `pw-record   ${
         pwVersion ??
-        `NOT FOUND at "${config.paths.pwRecord}" - install pipewire-utils (apt install pipewire-utils)`
+        `NOT FOUND at "${config.paths.pwRecord}" - install pipewire-bin (Debian/Ubuntu) or pipewire-utils (Fedora)`
       }`,
     );
   }

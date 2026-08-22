@@ -152,8 +152,8 @@ function run(args: string[], timeoutMs = 15_000): Promise<string> {
 export class PipeWireUnavailableError extends Error {
   constructor() {
     super(
-      'The PipeWire capture tools were not found. Install them (e.g. "apt install pipewire-utils" ' +
-        'or "dnf install pipewire-utils"), or point PWRECORD_PATH at pw-record.',
+      'The PipeWire capture tools were not found. Install them ("apt install pipewire-bin" on ' +
+        'Debian/Ubuntu or "dnf install pipewire-utils" on Fedora), or point PWRECORD_PATH at pw-record.',
     );
     this.name = 'PipeWireUnavailableError';
   }
@@ -162,21 +162,22 @@ export class PipeWireUnavailableError extends Error {
 /** Final shutdown backstop for any capture child that lost its owning session reference. */
 export async function closeAllTaps(): Promise<void> {
   const children = [...captureChildren];
-  if (children.length === 0) return;
-  log.warn('cleaning up remaining AudioTap processes', { count: children.length });
-  await Promise.all(
-    children.map(async (child) => {
-      try {
-        child.stdin.write('quit\n');
-        child.stdin.end();
-      } catch {
-        /* already exiting */
-      }
-      if (child.exitCode !== null) return;
-      await Promise.race([once(child, 'close'), new Promise((resolve) => setTimeout(resolve, 1_000))]);
-      if (child.exitCode === null) child.kill();
-    }),
-  );
+  if (children.length > 0) {
+    log.warn('cleaning up remaining AudioTap processes', { count: children.length });
+    await Promise.all(
+      children.map(async (child) => {
+        try {
+          child.stdin.write('quit\n');
+          child.stdin.end();
+        } catch {
+          /* already exiting */
+        }
+        if (child.exitCode !== null) return;
+        await Promise.race([once(child, 'close'), new Promise((resolve) => setTimeout(resolve, 1_000))]);
+        if (child.exitCode === null) child.kill();
+      }),
+    );
+  }
   await closeAllPipedTaps();
 }
 

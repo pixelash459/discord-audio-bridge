@@ -37,6 +37,7 @@ export class Pacer {
   #targetBytes: number;
   #driftCapBytes: number;
   #channels: number;
+  #frameBytes: number;
 
   #chunks: Buffer[] = [];
   #buffered = 0;
@@ -46,7 +47,6 @@ export class Pacer {
   #timer: NodeJS.Timeout;
   #backpressured = false;
   #closed = false;
-  #receivedData = false;
   #primed = false;
 
   #gain = 1;
@@ -64,11 +64,17 @@ export class Pacer {
   constructor(source: Readable, options: PacerOptions) {
     this.#source = source;
     this.#channels = options.channels;
+    this.#frameBytes = options.channels * 4;
     // f32le in and out, so every frame is 4 bytes per channel.
     this.#bytesPerMs = (options.sampleRate * options.channels * 4) / 1000;
-    this.#targetBytes = Math.round(options.targetMs * this.#bytesPerMs);
-    this.#driftCapBytes = Math.round((options.targetMs + DRIFT_MARGIN_MS) * this.#bytesPerMs);
-    this.#tickBytes = Math.round((TICK_MS * this.#bytesPerMs) / 4) * 4;
+    this.#targetBytes =
+      Math.round((options.targetMs * this.#bytesPerMs) / this.#frameBytes) * this.#frameBytes;
+    this.#driftCapBytes =
+      Math.round(
+        ((options.targetMs + DRIFT_MARGIN_MS) * this.#bytesPerMs) / this.#frameBytes,
+      ) * this.#frameBytes;
+    this.#tickBytes =
+      Math.round((TICK_MS * this.#bytesPerMs) / this.#frameBytes) * this.#frameBytes;
     this.#windowPeak = new Array<number>(options.channels).fill(0);
     this.#windowSumSq = new Array<number>(options.channels).fill(0);
 
@@ -93,6 +99,7 @@ export class Pacer {
       if (!source.readableEnded) this.#fail('capture stream closed unexpectedly');
     });
 
+    this.#nextTickAt = performance.now() + TICK_MS;
     this.#timer = setInterval(() => this.#tick(), TICK_MS);
   }
 
@@ -115,14 +122,12 @@ export class Pacer {
 
   #push(raw: Buffer): void {
     if (this.#closed) return;
-    this.#receivedData = true;
-
-    // An OS pipe splits bytes at arbitrary boundaries, which can cut a 4-byte float in half.
-    // Stitch the carry back on and keep any new remainder for the next chunk, so every buffer
-    // from here on is frame-aligned.
+    // An OS pipe splits bytes at arbitrary boundaries, which can cut a multi-channel frame in
+    // half. Stitch the carry back on and retain only complete frames so trimming never swaps the
+    // left and right channels.
     let chunk = this.#carry ? Buffer.concat([this.#carry, raw]) : raw;
     this.#carry = undefined;
-    const remainder = chunk.length % 4;
+    const remainder = chunk.length % this.#frameBytes;
     if (remainder !== 0) {
       this.#carry = chunk.subarray(chunk.length - remainder);
       chunk = chunk.subarray(0, chunk.length - remainder);
@@ -176,9 +181,21 @@ export class Pacer {
   }
 
   #emitTick(): void {
+    // Build the configured jitter reserve before consuming captured audio. Silence continues to
+    // flow during priming so Discord never sees a gap. A later underrun re-enters this state.
+    if (!this.#primed) {
+      if (this.#buffered < this.#targetBytes) {
+        this.#paddedMs += this.#tickBytes / this.#bytesPerMs;
+        this.#write(Buffer.alloc(this.#tickBytes), false);
+        return;
+      }
+      this.#primed = true;
+    }
+
     let toWrite = this.#tickBytes;
     while (toWrite > 0) {
       if (this.#buffered === 0) {
+        this.#primed = false;
         this.#paddedMs += toWrite / this.#bytesPerMs;
         this.#write(Buffer.alloc(toWrite), false);
         return;
@@ -210,7 +227,13 @@ export class Pacer {
     // Backpressure stops the clock until ffmpeg drains; the buffer upstream absorbs the pause
     // and the drift trim keeps it bounded, so no data is lost.
     this.#backpressured = !this.stream.write(chunk);
-    if (this.#backpressured) this.stream.once('drain', () => (this.#backpressured = false));
+    if (this.#backpressured) {
+      this.stream.once('drain', () => {
+        this.#backpressured = false;
+        // Do not replay every tick missed while downstream was blocked as one audio burst.
+        this.#nextTickAt = performance.now() + TICK_MS;
+      });
+    }
   }
 
   #scale(chunk: Buffer): Buffer {

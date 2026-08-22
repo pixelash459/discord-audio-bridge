@@ -49,6 +49,25 @@ for (const specifier of modules) {
   }
 }
 
+// With no --project-root flag, indexOf() returns -1. The packaged-build regression used
+// argv[-1 + 1] and therefore mistook argv[0] for the flag value, ignoring BRIDGE_PROJECT_ROOT.
+{
+  const { findProjectRoot } = await import(new URL('../src/config.ts', import.meta.url).href);
+  const expected = join(tmpdir(), 'discord-audio-bridge-packaged-assets');
+  const actual = findProjectRoot(
+    ['/usr/lib/discord-audio-bridge/discord-audio-bridge'],
+    { BRIDGE_PROJECT_ROOT: expected },
+    '/unrelated-launch-directory',
+    true,
+  );
+  if (actual !== expected) {
+    failed++;
+    process.stdout.write(`  FAIL  packaged asset-root override (got ${actual})\n`);
+  } else {
+    process.stdout.write('  ok    packaged asset-root override\n');
+  }
+}
+
 // A second application-menu click should open the authenticated panel from the running process,
 // not start another Discord client. Exercise token parsing and the authenticated state probe
 // without binding a real port.
@@ -119,6 +138,7 @@ for (const specifier of modules) {
 }
 
 const tapSource = await readFile(new URL('../src/audio/tap.ts', import.meta.url), 'utf8');
+const configSource = await readFile(new URL('../src/config.ts', import.meta.url), 'utf8');
 const envSource = await readFile(new URL('../src/control/envFile.ts', import.meta.url), 'utf8');
 const apiSource = await readFile(new URL('../src/control/api.ts', import.meta.url), 'utf8');
 const controlServerSource = await readFile(new URL('../src/control/server.ts', import.meta.url), 'utf8');
@@ -130,15 +150,19 @@ const desktopSource = await readFile(
 const envExample = await readFile(new URL('../.env.example', import.meta.url), 'utf8');
 if (
   /if \(children\.length === 0\) return;[\s\S]{0,800}closeAllPipedTaps/.test(tapSource) ||
+  !configSource.includes('argIndex >= 0 ?') ||
+  !configSource.includes("'/usr/share/discord-audio-bridge'") ||
   !envSource.includes("join(runtimeRoot, '.env')") ||
   apiSource.includes("runScript('register')") ||
   !packageSource.includes('readdirSync(audioTapDir') ||
   !packageSource.includes('`overrides:`') ||
   !packageSource.includes("join(appDir, 'discord-audio-bridge.png')") ||
   !packageSource.includes('BRIDGE_RUNTIME_ROOT=') ||
+  !packageSource.includes("'Exec=/usr/bin/discord-audio-bridge --open'") ||
   !packageSource.includes('/usr/share/applications/io.github.ashutoshchaudhary_lgtm.discord-audio-bridge.desktop') ||
   !packageSource.includes('/usr/share/metainfo/io.github.ashutoshchaudhary_lgtm.discord-audio-bridge.appdata.xml') ||
   !controlServerSource.includes('mode: 0o600') ||
+  !controlServerSource.includes('control panel assets are missing') ||
   !desktopSource.includes('Exec=discord-audio-bridge --open') ||
   !desktopSource.includes('Terminal=false')
 ) {

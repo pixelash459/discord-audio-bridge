@@ -7,18 +7,31 @@ import { IS_LINUX, isWritable, userStateDir } from './platform.ts';
 /**
  * Where the project's files (web/, remote/, AudioTap) live.
  *
- * Ordered so every way of running the bot works: an explicit override (used by packages that
- * separate the binary from its assets), the directory of the running script or single-file
- * executable, and the working directory — each walking upward to find web/index.html, which is
- * the one file that must sit at the root for the panels to serve. No import.meta here: the
- * release build is a CommonJS bundle, where it does not survive.
+ * An explicit override (used by packages that separate the binary from its assets) is authoritative.
+ * Without one, the running script/executable, standard Linux install root, and working directory
+ * are searched upward for web/index.html. No import.meta here: the release build is a CommonJS
+ * bundle, where it does not survive.
  */
-export function findProjectRoot(): string {
-  const argIndex = process.argv.indexOf('--project-root');
-  const override =
-    process.argv[argIndex + 1]?.trim() || process.env['BRIDGE_PROJECT_ROOT']?.trim() || '';
+export function findProjectRoot(
+  argv: readonly string[] = process.argv,
+  environment: NodeJS.ProcessEnv = process.env,
+  currentDirectory = process.cwd(),
+  linux = IS_LINUX,
+): string {
+  const argIndex = argv.indexOf('--project-root');
+  const cliOverride = argIndex >= 0 ? argv[argIndex + 1]?.trim() ?? '' : '';
+  const override = cliOverride || environment['BRIDGE_PROJECT_ROOT']?.trim() || '';
 
-  const starts = [override, dirname(process.argv[1] ?? process.execPath), process.cwd()];
+  // An explicit package/CLI root is authoritative. The old behavior discarded it when its probe
+  // failed and silently served assets relative to the launcher's working directory, which turned
+  // a packaging problem into an unhelpful plain "Not found" page.
+  if (override) return resolve(override);
+
+  const starts = [
+    dirname(argv[1] ?? process.execPath),
+    ...(linux ? ['/usr/share/discord-audio-bridge'] : []),
+    currentDirectory,
+  ];
   for (const start of starts) {
     if (!start) continue;
     let dir = resolve(start);
@@ -29,7 +42,7 @@ export function findProjectRoot(): string {
       dir = parent;
     }
   }
-  return process.cwd();
+  return currentDirectory;
 }
 
 export const projectRoot = findProjectRoot();

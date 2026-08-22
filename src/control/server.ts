@@ -1,7 +1,7 @@
 import { randomBytes, timingSafeEqual } from 'node:crypto';
 import { chmodSync, createReadStream, existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
-import { dirname, extname, normalize, resolve, sep } from 'node:path';
+import { dirname, extname, join, normalize, resolve, sep } from 'node:path';
 import { WebSocketServer, type WebSocket } from 'ws';
 import type { Client } from 'discord.js';
 
@@ -59,6 +59,9 @@ export class ControlServer {
   }
 
   async start(): Promise<void> {
+    if (!existsSync(join(webRoot, 'index.html'))) {
+      log.error('control panel assets are missing', { projectRoot, webRoot });
+    }
     this.#http.on('request', (req, res) => void this.#route(req, res));
 
     this.#http.on('upgrade', (req, socket, head) => {
@@ -208,7 +211,10 @@ export class ControlServer {
     }
 
     if (!existsSync(target)) {
-      res.writeHead(404, { 'content-type': 'text/plain' }).end('Not found');
+      log.warn('control panel asset not found', { pathname, target, webRoot });
+      res
+        .writeHead(404, { 'content-type': 'text/plain; charset=utf-8' })
+        .end(`Control panel asset not found: ${pathname}\nAsset root: ${webRoot}\n`);
       return;
     }
 

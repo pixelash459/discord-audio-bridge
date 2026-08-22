@@ -157,7 +157,7 @@ jobs:
           test -f "$desktop"
           test -f "$metainfo"
           test -x "$wrapper"
-          grep -qx 'Exec=discord-audio-bridge --open' "$desktop"
+          grep -qx 'Exec=/usr/bin/discord-audio-bridge --open' "$desktop"
           grep -qx 'Terminal=false' "$desktop"
           grep -q '<launchable type="desktop-id">io.github.ashutoshchaudhary_lgtm.discord-audio-bridge.desktop</launchable>' "$metainfo"
           grep -q 'BRIDGE_RUNTIME_ROOT=' "$wrapper"

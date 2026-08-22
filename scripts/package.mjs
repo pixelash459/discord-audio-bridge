@@ -163,9 +163,17 @@ async function packageLinux() {
   const iconDir = join(fhs, 'usr', 'share', 'icons', 'hicolor', 'scalable', 'apps');
   mkdirSync(iconDir, { recursive: true });
   cpSync(join(root, 'packaging', 'discord-audio-bridge.svg'), join(iconDir, 'discord-audio-bridge.svg'));
-  cpSync(
-    join(root, 'packaging', 'io.github.ashutoshchaudhary_lgtm.discord-audio-bridge.desktop'),
+  const desktopTemplate = join(
+    root,
+    'packaging',
+    'io.github.ashutoshchaudhary_lgtm.discord-audio-bridge.desktop',
+  );
+  writeFileSync(
     join(applications, 'io.github.ashutoshchaudhary_lgtm.discord-audio-bridge.desktop'),
+    readFileSync(desktopTemplate, 'utf8').replace(
+      /^Exec=.*$/m,
+      'Exec=/usr/bin/discord-audio-bridge --open',
+    ),
   );
   cpSync(
     join(root, 'packaging', 'io.github.ashutoshchaudhary_lgtm.discord-audio-bridge.metainfo.xml'),
@@ -264,7 +272,7 @@ async function packageLinux() {
     cpSync(join(root, 'packaging', 'icon-256.png'), join(appDir, 'discord-audio-bridge.png'));
     cpSync(join(root, 'packaging', 'icon-256.png'), join(appDir, '.DirIcon'));
     cpSync(
-      join(root, 'packaging', 'io.github.ashutoshchaudhary_lgtm.discord-audio-bridge.desktop'),
+      desktopTemplate,
       join(appDir, 'io.github.ashutoshchaudhary_lgtm.discord-audio-bridge.desktop'),
     );
     writeFileSync(

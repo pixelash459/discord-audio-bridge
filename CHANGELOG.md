@@ -6,6 +6,16 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [1.1.3] - 2026-08-23
+
+### Fixed
+
+- Packaged startup no longer mistakes `process.argv[0]` for a missing `--project-root` value. That
+  bug ignored the Linux wrapper's asset-root override and made the local panel return `Not found`.
+- DEB/RPM desktop entries now invoke `/usr/bin/discord-audio-bridge` explicitly, while the runtime
+  also recognizes the standard `/usr/share/discord-audio-bridge` asset location without relying on
+  launcher environment. Missing assets now produce a diagnostic path in logs and the HTTP response.
+
 ## [1.1.2] - 2026-08-22
 
 ### Added
@@ -111,7 +121,8 @@ First release.
 - ffmpeg's Ogg muxer defaults to one-second pages, which starves the Discord player. This project
   sets `-page_duration 20000`; measured, that is 163 ms to first packet versus 3186 ms.
 
-[Unreleased]: https://github.com/AshutoshChaudhary-lgtm/discord-audio-bridge/compare/v1.1.2...HEAD
+[Unreleased]: https://github.com/AshutoshChaudhary-lgtm/discord-audio-bridge/compare/v1.1.3...HEAD
+[1.1.3]: https://github.com/AshutoshChaudhary-lgtm/discord-audio-bridge/compare/v1.1.2...v1.1.3
 [1.1.2]: https://github.com/AshutoshChaudhary-lgtm/discord-audio-bridge/compare/v1.1.1...v1.1.2
 [1.1.1]: https://github.com/AshutoshChaudhary-lgtm/discord-audio-bridge/compare/v1.1.0...v1.1.1
 [1.1.0]: https://github.com/AshutoshChaudhary-lgtm/discord-audio-bridge/releases/tag/v1.1.0

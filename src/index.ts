@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 import { commandsByName, UserError } from './commands.ts';
-import { config, projectRoot } from './config.ts';
+import { config, projectRoot, runtimeRoot } from './config.ts';
 import { logger } from './logger.ts';
 import { signIn, hasToken } from './signin.ts';
 import { closeAllTaps, captureBackend } from './audio/tap.ts';
@@ -107,6 +107,8 @@ async function main(openPanel = false): Promise<void> {
     node: process.version,
     platform: `${process.platform}/${process.arch}`,
     pid: process.pid,
+    projectRoot,
+    runtimeRoot,
     logFile: config.paths.logFile ?? 'disabled',
   });
 

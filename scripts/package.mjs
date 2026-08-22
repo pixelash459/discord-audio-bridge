@@ -233,7 +233,9 @@ async function packageLinux() {
   }
 
   const appimagetool = process.env['APPIMAGETOOL_PATH'] ?? 'appimagetool';
-  const hasAppimagetool = spawnSync(appimagetool, ['--version'], { encoding: 'utf8' }).status === 0;
+  const hasAppimagetool = spawnSync(appimagetool, ['--appimage-extract-and-run', '--version'], {
+    encoding: 'utf8',
+  }).status === 0;
   if (hasAppimagetool) {
     const appDir = join(dist, 'DiscordAudioBridge.AppDir');
     rmSync(appDir, { recursive: true, force: true });

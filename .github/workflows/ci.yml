@@ -140,7 +140,7 @@ jobs:
           curl -fsSL -o /usr/local/bin/appimagetool \
             "https://github.com/AppImage/AppImageKit/releases/download/continuous/appimagetool-${{ matrix.appimage-arch }}.AppImage"
           chmod +x /usr/local/bin/appimagetool
-          appimagetool --version
+          appimagetool --appimage-extract-and-run --version
 
       - name: Package
         run: npm run package

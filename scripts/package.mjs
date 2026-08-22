@@ -169,7 +169,7 @@ async function packageLinux() {
   );
   cpSync(
     join(root, 'packaging', 'discord-audio-bridge.metainfo.xml'),
-    join(metainfo, 'discord-audio-bridge.appdata.xml'),
+    join(metainfo, 'io.github.ashutoshchaudhary_lgtm.discord-audio-bridge.appdata.xml'),
   );
 
   // The wrapper points the binary at its assets; everything user-writable (tokens, logs, the
@@ -238,8 +238,8 @@ async function packageLinux() {
         `    dst: /usr/share/icons/hicolor/scalable/apps/discord-audio-bridge.svg`,
         `  - src: ${join(applications, 'discord-audio-bridge.desktop')}`,
         `    dst: /usr/share/applications/discord-audio-bridge.desktop`,
-        `  - src: ${join(metainfo, 'discord-audio-bridge.appdata.xml')}`,
-        `    dst: /usr/share/metainfo/discord-audio-bridge.appdata.xml`,
+        `  - src: ${join(metainfo, 'io.github.ashutoshchaudhary_lgtm.discord-audio-bridge.appdata.xml')}`,
+        `    dst: /usr/share/metainfo/io.github.ashutoshchaudhary_lgtm.discord-audio-bridge.appdata.xml`,
         `  - src: ${join(bin, 'discord-audio-bridge')}`,
         `    dst: /usr/bin/discord-audio-bridge`,
         ``,

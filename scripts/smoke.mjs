@@ -137,7 +137,7 @@ if (
   !packageSource.includes("join(appDir, 'discord-audio-bridge.png')") ||
   !packageSource.includes('BRIDGE_RUNTIME_ROOT=') ||
   !packageSource.includes('/usr/share/applications/discord-audio-bridge.desktop') ||
-  !packageSource.includes('/usr/share/metainfo/discord-audio-bridge.appdata.xml') ||
+  !packageSource.includes('/usr/share/metainfo/io.github.ashutoshchaudhary_lgtm.discord-audio-bridge.appdata.xml') ||
   !controlServerSource.includes('mode: 0o600') ||
   !desktopSource.includes('Exec=discord-audio-bridge --open') ||
   !desktopSource.includes('Terminal=false')

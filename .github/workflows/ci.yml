@@ -152,7 +152,7 @@ jobs:
           mkdir -p dist/deb-root
           dpkg-deb --extract dist/release/*.deb dist/deb-root
           desktop=dist/deb-root/usr/share/applications/discord-audio-bridge.desktop
-          metainfo=dist/deb-root/usr/share/metainfo/discord-audio-bridge.appdata.xml
+          metainfo=dist/deb-root/usr/share/metainfo/io.github.ashutoshchaudhary_lgtm.discord-audio-bridge.appdata.xml
           wrapper=dist/deb-root/usr/bin/discord-audio-bridge
           test -f "$desktop"
           test -f "$metainfo"

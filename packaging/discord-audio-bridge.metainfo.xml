@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>io.github.ashutoshchaudhary_lgtm.discord-audio-bridge</id>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>MIT</project_license>
+  <name>Discord Audio Bridge</name>
+  <summary>Stream one application's audio into a Discord voice channel</summary>
+  <developer id="io.github.ashutoshchaudhary_lgtm">
+    <name>Discord Audio Bridge contributors</name>
+  </developer>
+  <description>
+    <p>
+      Discord Audio Bridge captures one application or output device, encodes it as Opus, and
+      streams it into a Discord voice channel. A local browser control panel handles setup,
+      destinations, sources, levels, mute, gain, bitrate, diagnostics, and logs.
+    </p>
+    <p>
+      Linux capture uses the desktop user's PipeWire session. A restricted remote dashboard can
+      control the current stream from another device on the same LAN or personal Tailscale network.
+    </p>
+  </description>
+  <launchable type="desktop-id">discord-audio-bridge.desktop</launchable>
+  <provides>
+    <binary>discord-audio-bridge</binary>
+  </provides>
+  <categories>
+    <category>AudioVideo</category>
+  </categories>
+  <url type="homepage">https://github.com/AshutoshChaudhary-lgtm/discord-audio-bridge</url>
+  <url type="bugtracker">https://github.com/AshutoshChaudhary-lgtm/discord-audio-bridge/issues</url>
+  <releases>
+    <release version="1.1.2" date="2026-08-22">
+      <description>
+        <p>Adds command-free Linux desktop launching, single-instance attachment, and UI shutdown.</p>
+      </description>
+    </release>
+  </releases>
+  <content_rating type="oars-1.1" />
+</component>

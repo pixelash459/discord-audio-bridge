@@ -20,8 +20,8 @@ All notable changes to this project are documented here. The format follows
 - Release publishing now identifies the GitHub repository explicitly, so the checkout-free release
   job can create the release after downloading its build artifacts.
 - Installed Linux launchers now force writable state into the user's XDG state directory, include
-  the desktop entry in DEB/RPM payloads, run without a terminal window, and suppress Node's expected
-  single-executable experimental warning using the correctly named SEA build option.
+  desktop and AppStream metadata in DEB/RPM payloads, run without a terminal window, and suppress
+  Node's expected single-executable experimental warning using the correctly named SEA build option.
 - Saved bot credentials and local/remote control tokens are tightened to user-only file permissions
   on supported filesystems, including existing token files created by an older release.
 

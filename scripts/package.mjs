@@ -147,10 +147,12 @@ async function packageLinux() {
   const share = join(fhs, 'usr', 'share', 'discord-audio-bridge');
   const bin = join(fhs, 'usr', 'bin');
   const applications = join(fhs, 'usr', 'share', 'applications');
+  const metainfo = join(fhs, 'usr', 'share', 'metainfo');
   mkdirSync(lib, { recursive: true });
   mkdirSync(share, { recursive: true });
   mkdirSync(bin, { recursive: true });
   mkdirSync(applications, { recursive: true });
+  mkdirSync(metainfo, { recursive: true });
 
   cpSync(join(stage, binaryName), join(lib, binaryName));
   chmodSync(join(lib, binaryName), 0o755);
@@ -164,6 +166,10 @@ async function packageLinux() {
   cpSync(
     join(root, 'packaging', 'discord-audio-bridge.desktop'),
     join(applications, 'discord-audio-bridge.desktop'),
+  );
+  cpSync(
+    join(root, 'packaging', 'discord-audio-bridge.metainfo.xml'),
+    join(metainfo, 'discord-audio-bridge.metainfo.xml'),
   );
 
   // The wrapper points the binary at its assets; everything user-writable (tokens, logs, the
@@ -232,6 +238,8 @@ async function packageLinux() {
         `    dst: /usr/share/icons/hicolor/scalable/apps/discord-audio-bridge.svg`,
         `  - src: ${join(applications, 'discord-audio-bridge.desktop')}`,
         `    dst: /usr/share/applications/discord-audio-bridge.desktop`,
+        `  - src: ${join(metainfo, 'discord-audio-bridge.metainfo.xml')}`,
+        `    dst: /usr/share/metainfo/discord-audio-bridge.metainfo.xml`,
         `  - src: ${join(bin, 'discord-audio-bridge')}`,
         `    dst: /usr/bin/discord-audio-bridge`,
         ``,

@@ -47,7 +47,7 @@ davey runtime tree. `scripts/package.mjs` produces these layouts:
 | --- | --- |
 | `discord-audio-bridge-<version>-windows-amd64.zip` | `discord-audio-bridge.exe`, self-contained `AudioTap.exe`, both panels, and the davey runtime tree |
 | `discord-audio-bridge-<version>-linux-{amd64,arm64}.tar.gz` | Portable Linux layout with the bot executable, panels, and davey runtime tree |
-| `.deb` / `.rpm` with the same base name | FHS layout: wrapper in `/usr/bin`, binary/runtime under `/usr/lib`, assets and a desktop entry under `/usr/share`; Debian uses `pipewire-bin`, Fedora uses `pipewire-utils`, and ffmpeg plus `xdg-utils` are recommended |
+| `.deb` / `.rpm` with the same base name | FHS layout: wrapper in `/usr/bin`, binary/runtime under `/usr/lib`, assets, desktop entry, and AppStream metadata under `/usr/share`; Debian uses `pipewire-bin`, Fedora uses `pipewire-utils`, and the package pulls in `xdg-utils` |
 | `discord-audio-bridge-<version>-linux-{amd64,arm64}.AppImage` | The FHS layout wrapped with `AppRun`, including the same click-to-open desktop metadata |
 
 The pipeline is esbuild → Node `--build-sea`:

@@ -97,7 +97,7 @@ jobs:
             os: windows-latest
           - name: linux-x64
             os: ubuntu-latest
-            nfpm-arch: amd64
+            nfpm-arch: x86_64
             appimage-arch: x86_64
           - name: linux-arm64
             os: ubuntu-24.04-arm

@@ -129,12 +129,16 @@ release workflow completes. Artifact names use the package version in place of `
 | File | Platform |
 | --- | --- |
 | `discord-audio-bridge-<version>-windows-amd64.zip` | Windows x64 — unzip anywhere and run `discord-audio-bridge.exe` |
-| `discord-audio-bridge-<version>-linux-amd64.deb` / `…-arm64.deb` | Debian, Ubuntu, Mint — `apt install ./<file>.deb` |
-| `discord-audio-bridge-<version>-linux-amd64.rpm` / `…-arm64.rpm` | RPM distributions — `dnf install ./<file>.rpm` or `zypper install ./<file>.rpm` |
-| `discord-audio-bridge-<version>-linux-amd64.AppImage` / `…-arm64.AppImage` | Portable AppImage — make it executable, then run it |
+| `discord-audio-bridge-<version>-linux-amd64.deb` / `…-arm64.deb` | Debian, Ubuntu, Mint — install the file, then open **Discord Audio Bridge** from Applications |
+| `discord-audio-bridge-<version>-linux-amd64.rpm` / `…-arm64.rpm` | RPM distributions — install the file, then open **Discord Audio Bridge** from Applications |
+| `discord-audio-bridge-<version>-linux-amd64.AppImage` / `…-arm64.AppImage` | Portable AppImage — make it executable once, then double-click it |
 | `discord-audio-bridge-<version>-linux-amd64.tar.gz` / `…-arm64.tar.gz` | Portable archive — extract and run `discord-audio-bridge` |
 
-The first run prints the tokenized local control-panel URL and the restricted remote-control URLs.
+The Linux DEB and RPM install an Applications-menu entry. Opening it starts the bridge and launches
+the authenticated local control panel in the default browser; opening it again reuses the running
+bridge instead of starting another bot or audio-tap process. The AppImage provides the same launch
+behavior. Use **Setup → Quit app** to stop the background bridge without a terminal.
+
 On Linux, packaged installs optionally read `/etc/discord-audio-bridge/env`; per-user settings and
 runtime state live under `$XDG_STATE_HOME/discord-audio-bridge/` when set, otherwise
 `~/.local/state/discord-audio-bridge/`. Environment
@@ -199,8 +203,9 @@ instantly instead of taking up to an hour to propagate globally.
 
 ## The control panel
 
-Three tabs, served by the bot on `127.0.0.1`. Open the printed URL in a browser on either platform;
-on Windows, `npm run app` wraps the same page in a native WebView2 window.
+Three tabs, served by the bot on `127.0.0.1`. Packaged Linux launchers open the authenticated URL
+automatically. Source checkouts print it in the terminal; on Windows, `npm run app` wraps the same
+page in a native WebView2 window.
 
 **Stream** — pick a server and voice channel, then choose an application, output device, or (on
 Windows) DirectShow input. The app list shows processes that currently hold an audio session, with a
@@ -215,7 +220,8 @@ destination card can also raise a voice channel to the server's bitrate ceiling 
 **Setup** — credentials, audio defaults, paths, logging, and remote-control settings, written to the
 writable runtime `.env` (the checkout root during development, the per-user state directory for a
 read-only package). It can build AudioTap on Windows, register slash commands directly with Discord,
-and run diagnostics. Settings that only apply at startup are marked as requiring a restart.
+and run diagnostics. Settings that only apply at startup are marked as requiring a restart; use
+**Quit app**, then reopen **Discord Audio Bridge** from Applications to apply them.
 
 **Logs** — the bot's log, live, filterable by level, with history from before you opened the panel.
 The same entries persist as JSON Lines at the configured `LOG_FILE` (by default

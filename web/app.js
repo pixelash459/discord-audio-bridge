@@ -598,7 +598,8 @@ $('save-btn').addEventListener('click', async () => {
       notice.hidden = false;
       notice.textContent =
         `Saved. ${result.restartRequired.join(', ')} ` +
-        `${result.restartRequired.length === 1 ? 'takes' : 'take'} effect after restarting the bot.`;
+        `${result.restartRequired.length === 1 ? 'takes' : 'take'} effect after restarting the bot. ` +
+        'Use Quit app below, then reopen Discord Audio Bridge from Applications.';
     } else {
       notice.hidden = true;
     }
@@ -641,6 +642,16 @@ $('diag-btn').addEventListener('click', async () => {
     const output = $('diag-output');
     output.hidden = false;
     output.textContent = report;
+  } catch (error) {
+    fail(error);
+  }
+});
+
+$('quit-btn').addEventListener('click', async () => {
+  if (!window.confirm('Quit Discord Audio Bridge? Active streams will stop.')) return;
+  try {
+    await post('app/quit');
+    toast('Discord Audio Bridge is shutting down.', 'ok');
   } catch (error) {
     fail(error);
   }

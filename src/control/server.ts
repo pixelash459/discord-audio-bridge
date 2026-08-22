@@ -1,11 +1,12 @@
 import { randomBytes, timingSafeEqual } from 'node:crypto';
-import { createReadStream, existsSync, mkdirSync, writeFileSync } from 'node:fs';
+import { chmodSync, createReadStream, existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
-import { dirname, extname, join, normalize, resolve, sep } from 'node:path';
+import { dirname, extname, normalize, resolve, sep } from 'node:path';
 import { WebSocketServer, type WebSocket } from 'ws';
 import type { Client } from 'discord.js';
 
-import { projectRoot, runtimeRoot } from '../config.ts';
+import { projectRoot } from '../config.ts';
+import { controlTokenPath, removeSavedControlPanel } from './launcher.ts';
 import { logger, onLog, recentLogs } from '../logger.ts';
 import { handleApi, buildSnapshot, ApiError } from './api.ts';
 
@@ -14,7 +15,6 @@ const log = logger('control');
 const webRoot = resolve(projectRoot, 'web');
 // Written into the writable runtime root: the repo in development, the user state dir when
 // installed read-only under /usr/share or Program Files.
-const tokenPath = join(runtimeRoot, '.control-token');
 
 const MIME: Record<string, string> = {
   '.html': 'text/html; charset=utf-8',
@@ -43,11 +43,13 @@ export class ControlServer {
   #wss = new WebSocketServer({ noServer: true });
   #clients = new Set<WebSocket>();
   #client: Client;
+  #onQuit: (() => void) | undefined;
   #timer: NodeJS.Timeout | undefined;
   #stopLogFeed: (() => void) | undefined;
 
-  constructor(client: Client, port: number) {
+  constructor(client: Client, port: number, onQuit?: () => void) {
     this.#client = client;
+    this.#onQuit = onQuit;
     this.port = port;
     this.token = randomBytes(24).toString('base64url');
   }
@@ -87,8 +89,13 @@ export class ControlServer {
       });
     });
 
-    mkdirSync(dirname(tokenPath), { recursive: true });
-    writeFileSync(tokenPath, JSON.stringify({ port: this.port, token: this.token }), 'utf8');
+    mkdirSync(dirname(controlTokenPath), { recursive: true });
+    writeFileSync(
+      controlTokenPath,
+      JSON.stringify({ port: this.port, token: this.token }),
+      { encoding: 'utf8', mode: 0o600 },
+    );
+    chmodSync(controlTokenPath, 0o600);
 
     // One broadcast loop for every client: cheap, and keeps all panels in step.
     this.#timer = setInterval(() => void this.#broadcastState(), 500);
@@ -105,6 +112,7 @@ export class ControlServer {
     for (const ws of this.#clients) ws.close();
     this.#wss.close();
     await new Promise<void>((done) => this.#http.close(() => done()));
+    removeSavedControlPanel(this.token);
     log.info('control panel stopped');
   }
 
@@ -170,6 +178,11 @@ export class ControlServer {
       }
 
       try {
+        if (`${req.method} ${url.pathname}` === 'POST /api/app/quit') {
+          json(res, 200, { quitting: true });
+          setTimeout(() => this.#onQuit?.(), 50);
+          return;
+        }
         const result = await handleApi(this.#client, req, url);
         return json(res, 200, result ?? { ok: true });
       } catch (error) {

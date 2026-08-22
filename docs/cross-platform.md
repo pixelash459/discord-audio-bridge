@@ -47,8 +47,8 @@ davey runtime tree. `scripts/package.mjs` produces these layouts:
 | --- | --- |
 | `discord-audio-bridge-<version>-windows-amd64.zip` | `discord-audio-bridge.exe`, self-contained `AudioTap.exe`, both panels, and the davey runtime tree |
 | `discord-audio-bridge-<version>-linux-{amd64,arm64}.tar.gz` | Portable Linux layout with the bot executable, panels, and davey runtime tree |
-| `.deb` / `.rpm` with the same base name | FHS layout: wrapper in `/usr/bin`, binary/runtime under `/usr/lib`, assets under `/usr/share`; Debian uses `pipewire-bin`, Fedora uses `pipewire-utils`, and ffmpeg is recommended |
-| `discord-audio-bridge-<version>-linux-{amd64,arm64}.AppImage` | The FHS layout wrapped with `AppRun` |
+| `.deb` / `.rpm` with the same base name | FHS layout: wrapper in `/usr/bin`, binary/runtime under `/usr/lib`, assets and a desktop entry under `/usr/share`; Debian uses `pipewire-bin`, Fedora uses `pipewire-utils`, and ffmpeg plus `xdg-utils` are recommended |
+| `discord-audio-bridge-<version>-linux-{amd64,arm64}.AppImage` | The FHS layout wrapped with `AppRun`, including the same click-to-open desktop metadata |
 
 The pipeline is esbuild → Node `--build-sea`:
 
@@ -70,12 +70,16 @@ Runtime details that make packaged installs behave:
 
 - **Project root discovery** walks up from the executable (or `BRIDGE_PROJECT_ROOT`, set by the
   distro wrappers) to find `web/index.html`.
-- **Writable state** moves to `$XDG_STATE_HOME/discord-audio-bridge` when set, otherwise
-  `~/.local/state/discord-audio-bridge` (Linux), or
-  `%APPDATA%\discord-audio-bridge` (Windows) whenever the install root is read-only — that is
-  where `.control-token`, `.remote-token`, `logs/`, and the editable `.env` live.
+- **Writable state** lives at `$XDG_STATE_HOME/discord-audio-bridge` when set, otherwise
+  `~/.local/state/discord-audio-bridge` for installed Linux packages. Development checkouts use
+  their project root; read-only Windows packages use `%APPDATA%\discord-audio-bridge`. That is where
+  `.control-token`, `.remote-token`, `logs/`, and the editable `.env` live.
 - **System configuration**: Linux packages also read `/etc/discord-audio-bridge/env`; the
   user-level file wins for keys present in both, and real environment variables beat everything.
+- **Desktop launch** uses `--open`: the first click starts the bridge and opens its authenticated
+  loopback panel, while later clicks probe the saved control endpoint and attach to that process.
+  This prevents duplicate Discord clients and capture helpers. **Setup → Quit app** cleanly stops
+  the background process, so normal use requires no terminal.
 - `--doctor` and `--version` work on the packaged binary, so a broken install can be diagnosed
   without Node on the machine.
 
@@ -134,7 +138,7 @@ contains `Stream/Output/Audio` and `Audio/Sink` nodes in the same terminal sessi
 
 ### 3. Validate Discord and both panels
 
-Fill in `.env`, run `npm start`, and open the printed loopback URL. Verify that application and
+For a checkout, fill in `.env`, run `npm start`, and open the printed loopback URL. Verify that application and
 device sources render, a stream joins the chosen voice channel, meters move, gain and Opus bitrate
 changes take effect, and **Mute bot** changes the bot's Discord voice state. From another LAN or
 Tailscale device, open one of the printed remote URLs and verify source/destination selection,
@@ -160,9 +164,11 @@ tar -tzf dist/release/discord-audio-bridge-*-linux-*.tar.gz | head
 
 The tarball is always produced. `.deb`, `.rpm`, and AppImage outputs are produced only when `nfpm`
 and/or `appimagetool` are on `PATH`; CI installs both. For a `.deb` test, install the generated file
-with `sudo apt install ./dist/release/*.deb`, run `discord-audio-bridge --doctor` as the desktop user,
-and confirm editable state appears under `$XDG_STATE_HOME/discord-audio-bridge` (when set) or
-`~/.local/state/discord-audio-bridge`, rather than under `/usr/share`.
+with `sudo apt install ./dist/release/*.deb`, then open **Discord Audio Bridge** from the desktop
+Applications menu. Confirm the browser opens automatically, a second menu click returns to the
+same running panel, and **Setup → Quit app** stops it. Also run `discord-audio-bridge --doctor` as
+the desktop user and confirm editable state appears under `$XDG_STATE_HOME/discord-audio-bridge`
+(when set) or `~/.local/state/discord-audio-bridge`, rather than under `/usr/share`.
 
 ## Current external references
 

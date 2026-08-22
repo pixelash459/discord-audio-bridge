@@ -38,7 +38,11 @@ export const projectRoot = findProjectRoot();
  * Writable root for runtime state. Same as projectRoot in a checkout; a per-user state directory
  * when the install root is read-only (packaged installs under /usr/share or Program Files).
  */
-export const runtimeRoot = isWritable(projectRoot) ? projectRoot : userStateDir();
+export const runtimeRoot = process.env['BRIDGE_RUNTIME_ROOT']?.trim()
+  ? resolve(process.env['BRIDGE_RUNTIME_ROOT'])
+  : isWritable(projectRoot)
+    ? projectRoot
+    : userStateDir();
 
 function loadEnvFiles(paths: string[]): void {
   // Preserve variables supplied by the launching environment, while allowing each later file to

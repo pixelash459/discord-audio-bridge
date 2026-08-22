@@ -1,5 +1,5 @@
 import { randomBytes, timingSafeEqual } from 'node:crypto';
-import { createReadStream, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { chmodSync, createReadStream, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { networkInterfaces } from 'node:os';
 import { extname, join, normalize, resolve, sep, dirname } from 'node:path';
@@ -52,12 +52,16 @@ function loadToken(configured?: string): string {
 
   if (existsSync(tokenPath)) {
     const saved = readFileSync(tokenPath, 'utf8').trim();
-    if (saved.length >= 24) return saved;
+    if (saved.length >= 24) {
+      chmodSync(tokenPath, 0o600);
+      return saved;
+    }
   }
 
   const token = randomBytes(32).toString('base64url');
   mkdirSync(dirname(tokenPath), { recursive: true });
   writeFileSync(tokenPath, `${token}\n`, { encoding: 'utf8', mode: 0o600 });
+  chmodSync(tokenPath, 0o600);
   return token;
 }
 

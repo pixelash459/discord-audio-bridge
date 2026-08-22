@@ -6,10 +6,24 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [1.1.2] - 2026-08-22
+
+### Added
+
+- Linux DEB and RPM packages now install a normal Applications-menu launcher. It starts the bridge,
+  opens the authenticated local control panel in the default browser, and attaches to the existing
+  process on later clicks instead of spawning duplicate bots or audio capture helpers.
+- The Setup tab now has a **Quit app** control for cleanly stopping a background packaged launch.
+
 ### Fixed
 
 - Release publishing now identifies the GitHub repository explicitly, so the checkout-free release
   job can create the release after downloading its build artifacts.
+- Installed Linux launchers now force writable state into the user's XDG state directory, include
+  the desktop entry in DEB/RPM payloads, run without a terminal window, and suppress Node's expected
+  single-executable experimental warning using the correctly named SEA build option.
+- Saved bot credentials and local/remote control tokens are tightened to user-only file permissions
+  on supported filesystems, including existing token files created by an older release.
 
 ## [1.1.1] - 2026-08-22
 
@@ -97,6 +111,7 @@ First release.
 - ffmpeg's Ogg muxer defaults to one-second pages, which starves the Discord player. This project
   sets `-page_duration 20000`; measured, that is 163 ms to first packet versus 3186 ms.
 
-[Unreleased]: https://github.com/AshutoshChaudhary-lgtm/discord-audio-bridge/compare/v1.1.1...HEAD
+[Unreleased]: https://github.com/AshutoshChaudhary-lgtm/discord-audio-bridge/compare/v1.1.2...HEAD
+[1.1.2]: https://github.com/AshutoshChaudhary-lgtm/discord-audio-bridge/compare/v1.1.1...v1.1.2
 [1.1.1]: https://github.com/AshutoshChaudhary-lgtm/discord-audio-bridge/compare/v1.1.0...v1.1.1
 [1.1.0]: https://github.com/AshutoshChaudhary-lgtm/discord-audio-bridge/releases/tag/v1.1.0

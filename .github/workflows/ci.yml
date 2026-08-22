@@ -145,6 +145,21 @@ jobs:
       - name: Package
         run: npm run package
 
+      - name: Verify Linux desktop package layout
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          mkdir -p dist/deb-root
+          dpkg-deb --extract dist/release/*.deb dist/deb-root
+          desktop=dist/deb-root/usr/share/applications/discord-audio-bridge.desktop
+          wrapper=dist/deb-root/usr/bin/discord-audio-bridge
+          test -f "$desktop"
+          test -x "$wrapper"
+          grep -qx 'Exec=discord-audio-bridge --open' "$desktop"
+          grep -qx 'Terminal=false' "$desktop"
+          grep -q 'BRIDGE_RUNTIME_ROOT=' "$wrapper"
+          test -f dist/release/*.AppImage
+
       - name: Sanity-check the executable
         shell: bash
         run: |

@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 
 import { runtimeRoot } from '../config.ts';
@@ -120,7 +120,11 @@ export function writeConfig(updates: Partial<Record<EditableKey, string>>): void
   }
 
   mkdirSync(dirname(envPath), { recursive: true });
-  writeFileSync(envPath, `${rewritten.join('\n').replace(/\n+$/, '')}\n`, 'utf8');
+  writeFileSync(envPath, `${rewritten.join('\n').replace(/\n+$/, '')}\n`, {
+    encoding: 'utf8',
+    mode: 0o600,
+  });
+  chmodSync(envPath, 0o600);
 
   // Reflect the change in the running process so anything reading process.env sees it. Values that
   // config.ts froze at import time still need a restart, which the UI tells the user about.

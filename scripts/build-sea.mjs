@@ -28,7 +28,7 @@ writeFileSync(
     {
       main,
       output,
-      disableExperimentalSeaWarning: true,
+      disableExperimentalSEAWarning: true,
       useSnapshot: false,
       useCodeCache: false,
     },

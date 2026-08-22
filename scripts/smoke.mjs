@@ -6,7 +6,9 @@
 //
 // Run directly (`node scripts/smoke.mjs`) or via CI.
 
-import { readFile } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
 process.env.DISCORD_TOKEN ||= 'smoke-test-placeholder';
 process.env.DISCORD_APP_ID ||= '0';
@@ -26,6 +28,7 @@ const modules = [
   '../src/audio/encoder.ts',
   '../src/voice/session.ts',
   '../src/control/server.ts',
+  '../src/control/launcher.ts',
   '../src/control/api.ts',
   '../src/control/envFile.ts',
   '../src/remote/server.ts',
@@ -43,6 +46,40 @@ for (const specifier of modules) {
     failed++;
     process.stdout.write(`  FAIL  ${specifier.replace('../', '')}\n`);
     process.stdout.write(`        ${error instanceof Error ? error.stack : String(error)}\n`);
+  }
+}
+
+// A second application-menu click should open the authenticated panel from the running process,
+// not start another Discord client. Exercise token parsing and the authenticated state probe
+// without binding a real port.
+{
+  const temp = await mkdtemp(join(tmpdir(), 'discord-audio-bridge-launcher-'));
+  const tokenPath = join(temp, '.control-token');
+  const token = 'desktop-launcher-smoke-token-123456';
+  await writeFile(tokenPath, JSON.stringify({ port: 8787, token }), 'utf8');
+
+  const requested = [];
+  const { findRunningControlPanel } = await import(
+    new URL('../src/control/launcher.ts', import.meta.url).href
+  );
+  const panel = await findRunningControlPanel(tokenPath, async (input) => {
+    requested.push(String(input));
+    return new Response(JSON.stringify({ bot: { ready: true } }), {
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+    });
+  });
+  await rm(temp, { recursive: true, force: true });
+
+  if (
+    panel !== `http://127.0.0.1:8787/?token=${token}` ||
+    requested.length !== 1 ||
+    !requested[0].includes(`/api/state?token=${token}`)
+  ) {
+    failed++;
+    process.stdout.write('  FAIL  desktop launcher attaches to running panel\n');
+  } else {
+    process.stdout.write('  ok    desktop launcher attaches to running panel\n');
   }
 }
 
@@ -84,7 +121,12 @@ for (const specifier of modules) {
 const tapSource = await readFile(new URL('../src/audio/tap.ts', import.meta.url), 'utf8');
 const envSource = await readFile(new URL('../src/control/envFile.ts', import.meta.url), 'utf8');
 const apiSource = await readFile(new URL('../src/control/api.ts', import.meta.url), 'utf8');
+const controlServerSource = await readFile(new URL('../src/control/server.ts', import.meta.url), 'utf8');
 const packageSource = await readFile(new URL('./package.mjs', import.meta.url), 'utf8');
+const desktopSource = await readFile(
+  new URL('../packaging/discord-audio-bridge.desktop', import.meta.url),
+  'utf8',
+);
 const envExample = await readFile(new URL('../.env.example', import.meta.url), 'utf8');
 if (
   /if \(children\.length === 0\) return;[\s\S]{0,800}closeAllPipedTaps/.test(tapSource) ||
@@ -92,7 +134,12 @@ if (
   apiSource.includes("runScript('register')") ||
   !packageSource.includes('readdirSync(audioTapDir') ||
   !packageSource.includes('`overrides:`') ||
-  !packageSource.includes("join(appDir, 'discord-audio-bridge.png')")
+  !packageSource.includes("join(appDir, 'discord-audio-bridge.png')") ||
+  !packageSource.includes('BRIDGE_RUNTIME_ROOT=') ||
+  !packageSource.includes('/usr/share/applications/discord-audio-bridge.desktop') ||
+  !controlServerSource.includes('mode: 0o600') ||
+  !desktopSource.includes('Exec=discord-audio-bridge --open') ||
+  !desktopSource.includes('Terminal=false')
 ) {
   failed++;
   process.stdout.write('  FAIL  packaged runtime regression contracts\n');
@@ -196,6 +243,7 @@ if (!/\[hidden\]\s*\{[^}]*display:\s*none\s*!important\s*;/s.test(stylesheet)) {
 // The control socket can open before Discord is ready. Keep a guard against regressing to a UI
 // that permanently caches the empty pre-ready guild list.
 const webApp = await readFile(new URL('../web/app.js', import.meta.url), 'utf8');
+const webPage = await readFile(new URL('../web/index.html', import.meta.url), 'utf8');
 if (webApp.includes("if (state.capabilities?.platform === 'linux')")) {
   failed++;
   process.stdout.write('  FAIL  source renderer uses snapshot state safely\n');
@@ -218,6 +266,17 @@ if (webApp.includes("addEventListener('pointerup', commit)")) {
   process.stdout.write('  FAIL  sliders submit only once\n');
 } else {
   process.stdout.write('  ok    sliders submit only once\n');
+}
+
+if (
+  !controlServerSource.includes('POST /api/app/quit') ||
+  !webPage.includes('id="quit-btn"') ||
+  !webApp.includes("post('app/quit')")
+) {
+  failed++;
+  process.stdout.write('  FAIL  terminal-free app shutdown\n');
+} else {
+  process.stdout.write('  ok    terminal-free app shutdown\n');
 }
 
 for (const asset of ['index.html', 'style.css', 'app.js']) {

@@ -9,6 +9,7 @@ import { signIn, hasToken } from './signin.ts';
 import { closeAllTaps, captureBackend } from './audio/tap.ts';
 import { closeAllEncoders } from './audio/encoder.ts';
 import { ControlServer } from './control/server.ts';
+import { findRunningControlPanel } from './control/launcher.ts';
 import { RemoteServer } from './remote/server.ts';
 import { endAllSessions } from './voice/session.ts';
 import { openUrl } from './platform.ts';
@@ -101,7 +102,7 @@ client.on(Events.Debug, (message) => log.debug(`Discord client: ${message}`));
 let control: ControlServer | undefined;
 let remote: RemoteServer | undefined;
 
-async function main(): Promise<void> {
+async function main(openPanel = false): Promise<void> {
   log.info('starting Discord Audio Bridge', {
     node: process.version,
     platform: `${process.platform}/${process.arch}`,
@@ -112,12 +113,12 @@ async function main(): Promise<void> {
   // The control panel comes up BEFORE sign-in, on purpose. Its Setup tab is where you enter the bot
   // token, so gating it behind a successful sign-in would mean needing a token to enter a token.
   if (config.control.port > 0) {
-    control = new ControlServer(client, config.control.port);
+    control = new ControlServer(client, config.control.port, () => void shutdown('control-panel quit'));
     try {
       await control.start();
       process.stdout.write(`\n  Control panel:  ${control.url}\n\n`);
 
-      if (config.control.autoOpen) openUrl(control.url);
+      if (config.control.autoOpen || openPanel) openUrl(control.url);
     } catch (error) {
       control = undefined;
       log.error(
@@ -125,9 +126,28 @@ async function main(): Promise<void> {
           '(is another copy already running?)',
         error,
       );
+
+      // Two near-simultaneous menu clicks can race before the first process writes its token file.
+      // Give the winner a moment to finish listening, then attach this click to it and exit.
+      if (openPanel) {
+        await new Promise((resolve) => setTimeout(resolve, 250));
+        const existing = await findRunningControlPanel();
+        if (existing) {
+          openUrl(existing);
+          await client.destroy();
+          return;
+        }
+      }
     }
   } else {
     log.info('control panel disabled (CONTROL_PORT=0)');
+  }
+
+  if (openPanel && !control) {
+    log.error('desktop launch requires the local control panel; set CONTROL_PORT to a non-zero port');
+    await client.destroy();
+    process.exitCode = 1;
+    return;
   }
 
   // The remote dashboard is deliberately a separate, restricted server. It exposes runtime controls
@@ -219,6 +239,14 @@ if (args.includes('--doctor')) {
     process.stdout.write('unknown\n');
   }
   process.exit(0);
+} else if (args.includes('--open')) {
+  void findRunningControlPanel().then((existing) => {
+    if (existing) {
+      openUrl(existing);
+      return;
+    }
+    return main(true);
+  });
 } else {
-  void main();
+  void main(false);
 }

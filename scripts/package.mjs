@@ -146,9 +146,11 @@ async function packageLinux() {
   const lib = join(fhs, 'usr', 'lib', 'discord-audio-bridge');
   const share = join(fhs, 'usr', 'share', 'discord-audio-bridge');
   const bin = join(fhs, 'usr', 'bin');
+  const applications = join(fhs, 'usr', 'share', 'applications');
   mkdirSync(lib, { recursive: true });
   mkdirSync(share, { recursive: true });
   mkdirSync(bin, { recursive: true });
+  mkdirSync(applications, { recursive: true });
 
   cpSync(join(stage, binaryName), join(lib, binaryName));
   chmodSync(join(lib, binaryName), 0o755);
@@ -159,6 +161,10 @@ async function packageLinux() {
   const iconDir = join(fhs, 'usr', 'share', 'icons', 'hicolor', 'scalable', 'apps');
   mkdirSync(iconDir, { recursive: true });
   cpSync(join(root, 'packaging', 'discord-audio-bridge.svg'), join(iconDir, 'discord-audio-bridge.svg'));
+  cpSync(
+    join(root, 'packaging', 'discord-audio-bridge.desktop'),
+    join(applications, 'discord-audio-bridge.desktop'),
+  );
 
   // The wrapper points the binary at its assets; everything user-writable (tokens, logs, the
   // editable .env) lands in ~/.local/state/discord-audio-bridge via the runtime root logic.
@@ -166,7 +172,8 @@ async function packageLinux() {
     join(bin, 'discord-audio-bridge'),
     [
       '#!/bin/sh',
-      'exec env BRIDGE_PROJECT_ROOT=/usr/share/discord-audio-bridge \\',
+      'state_root="${XDG_STATE_HOME:-$HOME/.local/state}/discord-audio-bridge"',
+      'exec env BRIDGE_PROJECT_ROOT=/usr/share/discord-audio-bridge BRIDGE_RUNTIME_ROOT="$state_root" \\',
       '  /usr/lib/discord-audio-bridge/discord-audio-bridge "$@"',
       '',
     ].join('\n'),
@@ -195,11 +202,13 @@ async function packageLinux() {
         `  deb:`,
         `    depends:`,
         `      - pipewire-bin | pipewire`,
+        `      - xdg-utils`,
         `    recommends:`,
         `      - ffmpeg`,
         `  rpm:`,
         `    depends:`,
         `      - pipewire-utils`,
+        `      - xdg-utils`,
         `    recommends:`,
         `      - ffmpeg`,
         `rpm:`,
@@ -221,6 +230,8 @@ async function packageLinux() {
         `    dst: /usr/share/doc/discord-audio-bridge/README.md`,
         `  - src: ${join(iconDir, 'discord-audio-bridge.svg')}`,
         `    dst: /usr/share/icons/hicolor/scalable/apps/discord-audio-bridge.svg`,
+        `  - src: ${join(applications, 'discord-audio-bridge.desktop')}`,
+        `    dst: /usr/share/applications/discord-audio-bridge.desktop`,
         `  - src: ${join(bin, 'discord-audio-bridge')}`,
         `    dst: /usr/bin/discord-audio-bridge`,
         ``,
@@ -250,7 +261,8 @@ async function packageLinux() {
       [
         '#!/bin/sh',
         'HERE="$(dirname "$(readlink -f "$0")")"',
-        'exec env BRIDGE_PROJECT_ROOT="$HERE/usr/share/discord-audio-bridge" \\',
+        'state_root="${XDG_STATE_HOME:-$HOME/.local/state}/discord-audio-bridge"',
+        'exec env BRIDGE_PROJECT_ROOT="$HERE/usr/share/discord-audio-bridge" BRIDGE_RUNTIME_ROOT="$state_root" \\',
         '  "$HERE/usr/lib/discord-audio-bridge/discord-audio-bridge" "$@"',
         '',
       ].join('\n'),

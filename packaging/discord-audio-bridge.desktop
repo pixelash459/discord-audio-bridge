@@ -6,5 +6,5 @@ Comment=Stream one application's audio into a Discord voice channel
 Exec=discord-audio-bridge
 Icon=discord-audio-bridge
 Terminal=true
-Categories=AudioVideo;Audio;Network;
+Categories=AudioVideo;
 Keywords=discord;audio;stream;pipewire;wasapi;

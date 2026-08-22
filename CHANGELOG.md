@@ -25,6 +25,8 @@ All notable changes to this project are documented here. The format follows
   `pw-dump` there); Fedora guidance continues to use `pipewire-utils`.
 - nFPM dependency overrides now use its supported schema, and release CI executes the packaged
   AudioTap binary before accepting a Windows artifact.
+- Linux release CI now downloads the correct nFPM architecture, runs appimagetool without FUSE,
+  and supplies the desktop entry's required root-level icon when building AppImages.
 
 ### Documentation
 

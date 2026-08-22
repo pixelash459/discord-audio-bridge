@@ -240,7 +240,9 @@ async function packageLinux() {
     const appDir = join(dist, 'DiscordAudioBridge.AppDir');
     rmSync(appDir, { recursive: true, force: true });
     cpSync(fhs, appDir, { recursive: true });
-    cpSync(join(root, 'packaging', 'icon-256.png'), join(appDir, 'icon-256.png'));
+    // The desktop entry uses Icon=discord-audio-bridge. AppImageKit requires a matching
+    // top-level icon with that exact basename, in addition to the optional .DirIcon.
+    cpSync(join(root, 'packaging', 'icon-256.png'), join(appDir, 'discord-audio-bridge.png'));
     cpSync(join(root, 'packaging', 'icon-256.png'), join(appDir, '.DirIcon'));
     cpSync(join(root, 'packaging', 'discord-audio-bridge.desktop'), join(appDir, 'discord-audio-bridge.desktop'));
     writeFileSync(

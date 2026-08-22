@@ -91,7 +91,8 @@ if (
   !envSource.includes("join(runtimeRoot, '.env')") ||
   apiSource.includes("runScript('register')") ||
   !packageSource.includes('readdirSync(audioTapDir') ||
-  !packageSource.includes('`overrides:`')
+  !packageSource.includes('`overrides:`') ||
+  !packageSource.includes("join(appDir, 'discord-audio-bridge.png')")
 ) {
   failed++;
   process.stdout.write('  FAIL  packaged runtime regression contracts\n');

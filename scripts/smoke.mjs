@@ -124,7 +124,7 @@ const apiSource = await readFile(new URL('../src/control/api.ts', import.meta.ur
 const controlServerSource = await readFile(new URL('../src/control/server.ts', import.meta.url), 'utf8');
 const packageSource = await readFile(new URL('./package.mjs', import.meta.url), 'utf8');
 const desktopSource = await readFile(
-  new URL('../packaging/discord-audio-bridge.desktop', import.meta.url),
+  new URL('../packaging/io.github.ashutoshchaudhary_lgtm.discord-audio-bridge.desktop', import.meta.url),
   'utf8',
 );
 const envExample = await readFile(new URL('../.env.example', import.meta.url), 'utf8');
@@ -136,7 +136,7 @@ if (
   !packageSource.includes('`overrides:`') ||
   !packageSource.includes("join(appDir, 'discord-audio-bridge.png')") ||
   !packageSource.includes('BRIDGE_RUNTIME_ROOT=') ||
-  !packageSource.includes('/usr/share/applications/discord-audio-bridge.desktop') ||
+  !packageSource.includes('/usr/share/applications/io.github.ashutoshchaudhary_lgtm.discord-audio-bridge.desktop') ||
   !packageSource.includes('/usr/share/metainfo/io.github.ashutoshchaudhary_lgtm.discord-audio-bridge.appdata.xml') ||
   !controlServerSource.includes('mode: 0o600') ||
   !desktopSource.includes('Exec=discord-audio-bridge --open') ||

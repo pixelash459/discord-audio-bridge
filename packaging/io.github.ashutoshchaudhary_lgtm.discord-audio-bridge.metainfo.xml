@@ -19,7 +19,7 @@
       control the current stream from another device on the same LAN or personal Tailscale network.
     </p>
   </description>
-  <launchable type="desktop-id">discord-audio-bridge.desktop</launchable>
+  <launchable type="desktop-id">io.github.ashutoshchaudhary_lgtm.discord-audio-bridge.desktop</launchable>
   <provides>
     <binary>discord-audio-bridge</binary>
   </provides>

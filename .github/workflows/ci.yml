@@ -151,7 +151,7 @@ jobs:
         run: |
           mkdir -p dist/deb-root
           dpkg-deb --extract dist/release/*.deb dist/deb-root
-          desktop=dist/deb-root/usr/share/applications/discord-audio-bridge.desktop
+          desktop=dist/deb-root/usr/share/applications/io.github.ashutoshchaudhary_lgtm.discord-audio-bridge.desktop
           metainfo=dist/deb-root/usr/share/metainfo/io.github.ashutoshchaudhary_lgtm.discord-audio-bridge.appdata.xml
           wrapper=dist/deb-root/usr/bin/discord-audio-bridge
           test -f "$desktop"
@@ -159,7 +159,7 @@ jobs:
           test -x "$wrapper"
           grep -qx 'Exec=discord-audio-bridge --open' "$desktop"
           grep -qx 'Terminal=false' "$desktop"
-          grep -q '<launchable type="desktop-id">discord-audio-bridge.desktop</launchable>' "$metainfo"
+          grep -q '<launchable type="desktop-id">io.github.ashutoshchaudhary_lgtm.discord-audio-bridge.desktop</launchable>' "$metainfo"
           grep -q 'BRIDGE_RUNTIME_ROOT=' "$wrapper"
           test -f dist/release/*.AppImage
 

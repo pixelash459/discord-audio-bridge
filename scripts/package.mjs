@@ -164,11 +164,11 @@ async function packageLinux() {
   mkdirSync(iconDir, { recursive: true });
   cpSync(join(root, 'packaging', 'discord-audio-bridge.svg'), join(iconDir, 'discord-audio-bridge.svg'));
   cpSync(
-    join(root, 'packaging', 'discord-audio-bridge.desktop'),
-    join(applications, 'discord-audio-bridge.desktop'),
+    join(root, 'packaging', 'io.github.ashutoshchaudhary_lgtm.discord-audio-bridge.desktop'),
+    join(applications, 'io.github.ashutoshchaudhary_lgtm.discord-audio-bridge.desktop'),
   );
   cpSync(
-    join(root, 'packaging', 'discord-audio-bridge.metainfo.xml'),
+    join(root, 'packaging', 'io.github.ashutoshchaudhary_lgtm.discord-audio-bridge.metainfo.xml'),
     join(metainfo, 'io.github.ashutoshchaudhary_lgtm.discord-audio-bridge.appdata.xml'),
   );
 
@@ -236,8 +236,8 @@ async function packageLinux() {
         `    dst: /usr/share/doc/discord-audio-bridge/README.md`,
         `  - src: ${join(iconDir, 'discord-audio-bridge.svg')}`,
         `    dst: /usr/share/icons/hicolor/scalable/apps/discord-audio-bridge.svg`,
-        `  - src: ${join(applications, 'discord-audio-bridge.desktop')}`,
-        `    dst: /usr/share/applications/discord-audio-bridge.desktop`,
+        `  - src: ${join(applications, 'io.github.ashutoshchaudhary_lgtm.discord-audio-bridge.desktop')}`,
+        `    dst: /usr/share/applications/io.github.ashutoshchaudhary_lgtm.discord-audio-bridge.desktop`,
         `  - src: ${join(metainfo, 'io.github.ashutoshchaudhary_lgtm.discord-audio-bridge.appdata.xml')}`,
         `    dst: /usr/share/metainfo/io.github.ashutoshchaudhary_lgtm.discord-audio-bridge.appdata.xml`,
         `  - src: ${join(bin, 'discord-audio-bridge')}`,
@@ -263,7 +263,10 @@ async function packageLinux() {
     // top-level icon with that exact basename, in addition to the optional .DirIcon.
     cpSync(join(root, 'packaging', 'icon-256.png'), join(appDir, 'discord-audio-bridge.png'));
     cpSync(join(root, 'packaging', 'icon-256.png'), join(appDir, '.DirIcon'));
-    cpSync(join(root, 'packaging', 'discord-audio-bridge.desktop'), join(appDir, 'discord-audio-bridge.desktop'));
+    cpSync(
+      join(root, 'packaging', 'io.github.ashutoshchaudhary_lgtm.discord-audio-bridge.desktop'),
+      join(appDir, 'io.github.ashutoshchaudhary_lgtm.discord-audio-bridge.desktop'),
+    );
     writeFileSync(
       join(appDir, 'AppRun'),
       [

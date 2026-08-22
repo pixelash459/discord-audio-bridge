@@ -6,6 +6,11 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Fixed
+
+- Release publishing now identifies the GitHub repository explicitly, so the checkout-free release
+  job can create the release after downloading its build artifacts.
+
 ## [1.1.1] - 2026-08-22
 
 ### Fixed

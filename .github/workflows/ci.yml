@@ -185,5 +185,6 @@ jobs:
         run: |
           ls -la dist/release/
           gh release create "${GITHUB_REF_NAME}" dist/release/* \
+            --repo "${GITHUB_REPOSITORY}" \
             --title "discord-audio-bridge ${GITHUB_REF_NAME}" \
             --generate-notes

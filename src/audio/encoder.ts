@@ -5,6 +5,7 @@ import type { Readable } from 'node:stream';
 
 import { config, DISCORD_AUDIO } from '../config.ts';
 import { logger } from '../logger.ts';
+import { IS_WINDOWS } from '../platform.ts';
 import type { RawFormat } from './tap.ts';
 
 const log = logger('opus');
@@ -205,6 +206,7 @@ export class OpusEncoder {
  * reach the 48kHz float that a per-process tap gets for free.
  */
 export async function probeDshowFormat(name: string): Promise<DshowFormat | null> {
+  if (!IS_WINDOWS) return null;
   const args = ['-hide_banner', '-f', 'dshow', '-list_options', 'true', '-i', `audio=${name}`];
   const started = performance.now();
   log.debug('probing DirectShow format', { name });
@@ -213,9 +215,12 @@ export async function probeDshowFormat(name: string): Promise<DshowFormat | null
   let stderr = '';
   child.stderr.setEncoding('utf8');
   child.stderr.on('data', (chunk: string) => (stderr += chunk));
-  child.on('error', () => undefined);
 
-  await once(child, 'close');
+  // ffmpeg being missing entirely fires 'error' without ever closing; both paths must resolve.
+  await new Promise<void>((resolve) => {
+    child.once('close', () => resolve());
+    child.once('error', () => resolve());
+  });
 
   const options: DshowFormat[] = [];
   for (const line of stderr.split(/\r?\n/)) {
@@ -271,6 +276,7 @@ function score(format: DshowFormat): number {
  * pair it with a virtual cable (VB-CABLE) or "Stereo Mix" and no capture helper is needed.
  */
 export async function listDshowDevices(): Promise<DshowDevice[]> {
+  if (!IS_WINDOWS) return [];
   const args = ['-hide_banner', '-list_devices', 'true', '-f', 'dshow', '-i', 'dummy'];
   const child = spawn(config.paths.ffmpeg, args, { windowsHide: true });
   const started = performance.now();
@@ -279,7 +285,12 @@ export async function listDshowDevices(): Promise<DshowDevice[]> {
   child.stderr.setEncoding('utf8');
   child.stderr.on('data', (chunk: string) => (stderr += chunk));
 
-  await once(child, 'close'); // this invocation always "fails"; the listing is the point
+  // This invocation always "fails"; the listing is the point. A missing ffmpeg fires 'error'
+  // without closing, so both events resolve.
+  await new Promise<void>((resolve) => {
+    child.once('close', () => resolve());
+    child.once('error', () => resolve());
+  });
 
   const devices: DshowDevice[] = [];
   let current: DshowDevice | undefined;

@@ -6,9 +6,44 @@ import type { Readable } from 'node:stream';
 
 import { config, DISCORD_AUDIO } from '../config.ts';
 import { logger } from '../logger.ts';
+import { IS_LINUX, IS_WINDOWS } from '../platform.ts';
+import {
+  closeAllPipedTaps,
+  listPipewireApps,
+  listPipewireDevices,
+  pipewireAvailable,
+  PipedTap,
+} from './pipewire.ts';
 
 const log = logger('tap');
 const captureChildren = new Set<ChildProcessWithoutNullStreams>();
+
+/**
+ * A running capture, whichever side of the OS split produced it: AudioTap.exe on Windows,
+ * pw-record plus the Pacer on Linux. Both deliver raw PCM on `stream`, in `format`, paced at
+ * exactly real time with silence filled while the source is quiet.
+ */
+export interface CaptureTap {
+  readonly stream: Readable;
+  readonly format: RawFormat;
+  readonly stats: TapStats | null;
+  setGain(db: number): void;
+  close(): Promise<void>;
+}
+
+export type CaptureBackend = 'wasapi' | 'pipewire';
+
+/** Which per-app capture backend this host supports, or null when none is usable. */
+export function captureBackend(): CaptureBackend | null {
+  if (IS_WINDOWS) return existsSync(config.paths.audioTap) ? 'wasapi' : null;
+  if (IS_LINUX) return pipewireAvailable() ? 'pipewire' : null;
+  return null;
+}
+
+/** Historic name kept for the panels: "is the capture helper usable on this host". */
+export function isAudioTapBuilt(): boolean {
+  return captureBackend() !== null;
+}
 
 export interface RawFormat {
   sampleRate: number;
@@ -66,12 +101,13 @@ export class AudioTapUnavailableError extends Error {
   }
 }
 
-export function isAudioTapBuilt(): boolean {
-  return existsSync(config.paths.audioTap);
+/** True only where the Windows helper binary actually exists; commands below are Windows-only. */
+function audioTapPresent(): boolean {
+  return IS_WINDOWS && existsSync(config.paths.audioTap);
 }
 
 function run(args: string[], timeoutMs = 15_000): Promise<string> {
-  if (!isAudioTapBuilt()) return Promise.reject(new AudioTapUnavailableError());
+  if (!audioTapPresent()) return Promise.reject(new AudioTapUnavailableError());
 
   return new Promise((resolve, reject) => {
     const started = performance.now();
@@ -113,6 +149,16 @@ function run(args: string[], timeoutMs = 15_000): Promise<string> {
   });
 }
 
+export class PipeWireUnavailableError extends Error {
+  constructor() {
+    super(
+      'The PipeWire capture tools were not found. Install them (e.g. "apt install pipewire-utils" ' +
+        'or "dnf install pipewire-utils"), or point PWRECORD_PATH at pw-record.',
+    );
+    this.name = 'PipeWireUnavailableError';
+  }
+}
+
 /** Final shutdown backstop for any capture child that lost its owning session reference. */
 export async function closeAllTaps(): Promise<void> {
   const children = [...captureChildren];
@@ -131,14 +177,37 @@ export async function closeAllTaps(): Promise<void> {
       if (child.exitCode === null) child.kill();
     }),
   );
+  await closeAllPipedTaps();
 }
 
 export async function listProcesses(): Promise<ProcessInfo[]> {
-  return JSON.parse(await run(['--list-processes'])) as ProcessInfo[];
+  return IS_WINDOWS
+    ? (JSON.parse(await run(['--list-processes'])) as ProcessInfo[])
+    : listPipewireApps();
 }
 
 export async function listDevices(): Promise<DeviceInfo[]> {
-  return JSON.parse(await run(['--list-devices'])) as DeviceInfo[];
+  return IS_WINDOWS ? (JSON.parse(await run(['--list-devices'])) as DeviceInfo[]) : listPipewireDevices();
+}
+
+/**
+ * Starts a capture through whichever backend this host provides. The options mean the same thing
+ * on both platforms: `pid` is a Windows process id or a PipeWire node id, `deviceId` is an
+ * endpoint id or a PipeWire sink name, and `exclude` (capture everything BUT one app) exists only
+ * on Windows, where the process-loopback API offers it.
+ */
+export async function startCapture(options: TapOptions): Promise<CaptureTap> {
+  if (IS_WINDOWS) return Tap.start(options);
+  if (IS_LINUX) {
+    if (!pipewireAvailable()) throw new PipeWireUnavailableError();
+    if (options.exclude) {
+      throw new Error(
+        'Inverted capture (everything except one app) is Windows-only. PipeWire apps are captured individually.',
+      );
+    }
+    return PipedTap.start({ nodeId: options.pid, deviceId: options.deviceId, ...options });
+  }
+  throw new Error(`Per-app capture is not supported on ${process.platform}.`);
 }
 
 export interface TapOptions {
@@ -156,7 +225,7 @@ export interface TapOptions {
  * A running AudioTap process. `stream` is raw PCM in `format`; it is paced at exactly real time,
  * with silence filled in whenever the source app goes quiet.
  */
-export class Tap {
+export class Tap implements CaptureTap {
   readonly stream: Readable;
   readonly format: RawFormat;
 

@@ -18,14 +18,18 @@ process.env.LOG_FILE ||= 'off';
 const modules = [
   '../src/config.ts',
   '../src/logger.ts',
+  '../src/platform.ts',
   '../src/commands.ts',
   '../src/audio/tap.ts',
+  '../src/audio/pacer.ts',
+  '../src/audio/pipewire.ts',
   '../src/audio/encoder.ts',
   '../src/voice/session.ts',
   '../src/control/server.ts',
   '../src/control/api.ts',
   '../src/control/envFile.ts',
   '../src/remote/server.ts',
+  '../src/doctor.ts',
 ];
 
 let failed = 0;
@@ -174,6 +178,69 @@ if (filterIndex === -1 || !integerPipeArgs[filterIndex + 1]?.includes('volume=6d
   process.stdout.write('  FAIL  integer PCM gain fallback\n');
 } else {
   process.stdout.write('  ok    integer PCM gain fallback\n');
+}
+
+// The Linux capture helper is pw-record paced by the Pacer. Pacing is the property the whole
+// stream's survival rests on, so exercise it for real: feed one burst of sine, let the pacer run
+// dry, and check it kept emitting real-time audio (silence fill) with honest metering.
+{
+  const { PassThrough } = await import('node:stream');
+  const { Pacer } = await import(new URL('../src/audio/pacer.ts', import.meta.url).href);
+
+  const sampleRate = 48_000;
+  const source = new PassThrough();
+  const pacer = new Pacer(source, { sampleRate, channels: 2, targetMs: 60 });
+
+  let bytes = 0;
+  pacer.stream.on('data', (chunk) => (bytes += chunk.length));
+
+  // Stats describe the most recent interval, so the sine's window must be observed live rather
+  // than read from the final snapshot (which correctly reports the silence that followed).
+  let peakSeen = -Infinity;
+  const peakSampler = setInterval(() => {
+    const peak = pacer.stats.peakDb[0];
+    if (peak !== undefined && peak > peakSeen) peakSeen = peak;
+  }, 50);
+
+  // 300 ms of a 440 Hz sine at half-scale: peak must land at -6 dBFS in the stats.
+  const samples = new Float32Array((sampleRate * 2 * 300) / 1000);
+  for (let i = 0; i < samples.length; i += 2) {
+    const value = 0.5 * Math.sin((2 * Math.PI * 440 * i / 2) / sampleRate);
+    samples[i] = value;
+    samples[i + 1] = value;
+  }
+  source.write(Buffer.from(samples.buffer));
+
+  const started = performance.now();
+  await new Promise((resolve) => setTimeout(resolve, 1_100));
+  const elapsedMs = performance.now() - started;
+
+  const stats = pacer.stats;
+  const outputMs = (bytes / (sampleRate * 2 * 4)) * 1000;
+  clearInterval(peakSampler);
+  await pacer.close();
+
+  const pacingError = Math.abs(outputMs - elapsedMs);
+  if (pacingError > 150) {
+    failed++;
+    process.stdout.write(`  FAIL  pacer real-time pacing (emitted ${outputMs.toFixed(0)}ms in ${elapsedMs.toFixed(0)}ms)\n`);
+  } else {
+    process.stdout.write(`  ok    pacer real-time pacing (${pacingError.toFixed(0)}ms error over ~1.1s)\n`);
+  }
+
+  if (stats.paddedMs < 500) {
+    failed++;
+    process.stdout.write(`  FAIL  pacer silence fill (padded ${stats.paddedMs.toFixed(0)}ms after the burst)\n`);
+  } else {
+    process.stdout.write(`  ok    pacer silence fill (${stats.paddedMs.toFixed(0)}ms)\n`);
+  }
+
+  if (peakSeen < -8 || peakSeen > -4) {
+    failed++;
+    process.stdout.write(`  FAIL  pacer metering (peak ${peakSeen.toFixed(1)} dBFS, expected ~-6 for a half-scale sine)\n`);
+  } else {
+    process.stdout.write(`  ok    pacer metering (peak ${peakSeen.toFixed(1)} dBFS)\n`);
+  }
 }
 
 process.stdout.write(failed === 0 ? '\nsmoke test passed\n' : `\n${failed} check(s) failed\n`);

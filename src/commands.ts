@@ -14,8 +14,9 @@ import { generateDependencyReport } from '@discordjs/voice';
 import { config } from './config.ts';
 import { logger } from './logger.ts';
 import { listDshowDevices } from './audio/encoder.ts';
-import { isAudioTapBuilt, listDevices, listProcesses } from './audio/tap.ts';
+import { captureBackend, isAudioTapBuilt, listDevices, listProcesses } from './audio/tap.ts';
 import { endSession, getSession, startOrRetarget, type SourceSpec } from './voice/session.ts';
+import { IS_WINDOWS } from './platform.ts';
 
 const log = logger('commands');
 
@@ -187,8 +188,9 @@ const stream: Command = {
     if (sub === 'app') {
       if (!isAudioTapBuilt()) {
         throw new UserError(
-          'Per-app capture needs the AudioTap helper. Run `npm run build:native` on the host ' +
-            '(requires the .NET SDK), or use `/stream dshow` with a virtual cable instead.',
+          IS_WINDOWS
+            ? 'Per-app capture needs the AudioTap helper. Run `npm run build:native` on the host (requires the .NET SDK), or use `/stream dshow` with a virtual cable instead.'
+            : 'Per-app capture needs the PipeWire tools (pw-record). Install them on the host, e.g. `apt install pipewire-utils`, then try again.',
         );
       }
 
@@ -213,8 +215,9 @@ const stream: Command = {
     if (sub === 'device') {
       if (!isAudioTapBuilt()) {
         throw new UserError(
-          'Device capture needs the AudioTap helper. Run `npm run build:native` on the host, ' +
-            'or use `/stream dshow` instead.',
+          IS_WINDOWS
+            ? 'Device capture needs the AudioTap helper. Run `npm run build:native` on the host, or use `/stream dshow` instead.'
+            : 'Device capture needs the PipeWire tools (pw-record). Install them on the host, e.g. `apt install pipewire-utils`, then try again.',
         );
       }
 
@@ -229,6 +232,9 @@ const stream: Command = {
       return;
     }
 
+    if (!IS_WINDOWS) {
+      throw new UserError('DirectShow capture is Windows-only. On this host, use `/stream app` or `/stream device`.');
+    }
     const name = interaction.options.getString('target', true);
     await startStream(interaction, { kind: 'dshow', name, label: name });
   },
@@ -452,15 +458,19 @@ const sources: Command = {
     } else {
       embed.addFields({
         name: 'Applications and devices',
-        value: 'Unavailable — AudioTap is not built. Run `npm run build:native` on the host.',
+        value: IS_WINDOWS
+          ? 'Unavailable — AudioTap is not built. Run `npm run build:native` on the host.'
+          : 'Unavailable — the PipeWire tools are missing. Install them, e.g. `apt install pipewire-utils`.',
       });
     }
 
-    const dshow = await listDshowDevices().catch(() => []);
-    embed.addFields({
-      name: 'DirectShow inputs',
-      value: dshow.map((d) => `· ${d.name}`).join('\n') || '_none_',
-    });
+    if (IS_WINDOWS) {
+      const dshow = await listDshowDevices().catch(() => []);
+      embed.addFields({
+        name: 'DirectShow inputs',
+        value: dshow.map((d) => `· ${d.name}`).join('\n') || '_none_',
+      });
+    }
 
     await interaction.editReply({ embeds: [embed] });
   },
@@ -493,22 +503,43 @@ export async function collectDiagnostics(): Promise<string> {
   });
   const hasLibopus = !opus.error && opus.stdout.includes('libopus');
 
-  // `dotnet` on PATH only proves the runtime is there. Building AudioTap needs the SDK, and the
-  // host reports its absence by failing --version with "No .NET SDKs were found".
-  const dotnet = spawnSync('dotnet', ['--version'], { encoding: 'utf8', windowsHide: true });
-  const dotnetSdk = dotnet.error
-    ? 'not installed (needed only to build AudioTap: winget install Microsoft.DotNet.SDK.9)'
-    : dotnet.status === 0 && dotnet.stdout.trim()
-      ? dotnet.stdout.trim()
-      : 'runtime present but NO SDK (winget install Microsoft.DotNet.SDK.9)';
+  const backend = captureBackend();
+
+  // The capture half of the report is the one part that genuinely differs per OS.
+  const capture: string[] = [];
+  if (IS_WINDOWS) {
+    capture.push(
+      `AudioTap    ${backend === 'wasapi' ? config.paths.audioTap : `NOT BUILT (expected ${config.paths.audioTap}) - run npm run build:native`}`,
+    );
+    // `dotnet` on PATH only proves the runtime is there. Building AudioTap needs the SDK, and
+    // the host reports its absence by failing --version with "No .NET SDKs were found".
+    const dotnet = spawnSync('dotnet', ['--version'], { encoding: 'utf8', windowsHide: true });
+    capture.push(
+      `dotnet SDK  ${
+        dotnet.error
+          ? 'not installed (needed only to build AudioTap: winget install Microsoft.DotNet.SDK.9)'
+          : dotnet.status === 0 && dotnet.stdout.trim()
+            ? dotnet.stdout.trim()
+            : 'runtime present but NO SDK (winget install Microsoft.DotNet.SDK.9)'
+      }`,
+    );
+  } else {
+    const pw = spawnSync(config.paths.pwRecord, ['--version'], { encoding: 'utf8', windowsHide: true });
+    const pwVersion = pw.error ? undefined : pw.stdout.trim().split('\n').at(-1)?.trim();
+    capture.push(
+      `pw-record   ${
+        pwVersion ??
+        `NOT FOUND at "${config.paths.pwRecord}" - install pipewire-utils (apt install pipewire-utils)`
+      }`,
+    );
+  }
 
   return [
     '--- host ---',
     `node        ${process.version} (${process.platform}/${process.arch})`,
     `ffmpeg      ${ffmpegLine}`,
     `libopus     ${hasLibopus ? 'available' : 'MISSING - ffmpeg build has no libopus encoder'}`,
-    `AudioTap    ${isAudioTapBuilt() ? config.paths.audioTap : `NOT BUILT (expected ${config.paths.audioTap})`}`,
-    `dotnet SDK  ${dotnetSdk}`,
+    ...capture,
     `log file    ${config.paths.logFile ?? 'disabled'}`,
     `remote UI   ${config.remote.port > 0 ? `${config.remote.host}:${config.remote.port}` : 'disabled'}`,
     '',

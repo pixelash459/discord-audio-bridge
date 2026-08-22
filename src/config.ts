@@ -1,11 +1,74 @@
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
-import { fileURLToPath } from 'node:url';
 
-export const projectRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
+import { IS_LINUX, isWritable, userStateDir } from './platform.ts';
 
-const envFile = join(projectRoot, '.env');
-if (existsSync(envFile)) process.loadEnvFile(envFile);
+/**
+ * Where the project's files (web/, remote/, AudioTap) live.
+ *
+ * Ordered so every way of running the bot works: an explicit override (used by packages that
+ * separate the binary from its assets), the directory of the running script or single-file
+ * executable, and the working directory — each walking upward to find web/index.html, which is
+ * the one file that must sit at the root for the panels to serve. No import.meta here: the
+ * release build is a CommonJS bundle, where it does not survive.
+ */
+export function findProjectRoot(): string {
+  const argIndex = process.argv.indexOf('--project-root');
+  const override =
+    process.argv[argIndex + 1]?.trim() || process.env['BRIDGE_PROJECT_ROOT']?.trim() || '';
+
+  const starts = [override, dirname(process.argv[1] ?? process.execPath), process.cwd()];
+  for (const start of starts) {
+    if (!start) continue;
+    let dir = resolve(start);
+    for (let depth = 0; depth < 8; depth++) {
+      if (existsSync(join(dir, 'web', 'index.html'))) return dir;
+      const parent = dirname(dir);
+      if (parent === dir) break;
+      dir = parent;
+    }
+  }
+  return process.cwd();
+}
+
+export const projectRoot = findProjectRoot();
+
+/**
+ * Writable root for runtime state. Same as projectRoot in a checkout; a per-user state directory
+ * when the install root is read-only (packaged installs under /usr/share or Program Files).
+ */
+export const runtimeRoot = isWritable(projectRoot) ? projectRoot : userStateDir();
+
+function loadEnvFiles(paths: string[]): void {
+  for (const path of paths) {
+    if (!existsSync(path)) continue;
+    // Parsed by hand rather than process.loadEnvFile so real environment variables always win,
+    // no matter which file is loaded first.
+    for (const [key, value] of parseEnvFile(readFileSync(path, 'utf8'))) {
+      if (!(key in process.env)) process.env[key] = value;
+    }
+  }
+}
+
+function parseEnvFile(text: string): [string, string][] {
+  const entries: [string, string][] = [];
+  for (const line of text.split(/\r?\n/)) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith('#')) continue;
+    const equals = trimmed.indexOf('=');
+    if (equals === -1) continue;
+    entries.push([trimmed.slice(0, equals).trim(), trimmed.slice(equals + 1).trim()]);
+  }
+  return entries;
+}
+
+// A system-wide file for packaged installs, then the checkout's own .env. The checkout wins for
+// keys present in both, and real environment variables beat everything.
+loadEnvFiles([
+  ...(IS_LINUX ? ['/etc/discord-audio-bridge/env'] : []),
+  join(projectRoot, '.env'),
+  ...(runtimeRoot !== projectRoot ? [join(runtimeRoot, '.env')] : []),
+]);
 
 function required(name: string): string {
   const value = process.env[name]?.trim();
@@ -42,12 +105,19 @@ function vbr(): VbrMode {
 const logLevels = ['error', 'warn', 'info', 'debug'] as const;
 export type LogLevel = (typeof logLevels)[number];
 
-const defaultTapPath = join(projectRoot, 'native', 'AudioTap', 'bin', 'AudioTap.exe');
+// The repo layout keeps the helper at native/AudioTap/bin; packaged installs drop AudioTap.exe
+// next to the executable. Prefer whichever actually exists so both work unchanged.
+function defaultAudioTapPath(): string {
+  const repoPath = join(projectRoot, 'native', 'AudioTap', 'bin', 'AudioTap.exe');
+  if (existsSync(repoPath)) return repoPath;
+  return join(projectRoot, 'AudioTap.exe');
+}
 
 function logFile(): string | undefined {
   const raw = optional('LOG_FILE');
   if (raw?.toLowerCase() === 'off') return undefined;
-  return resolve(projectRoot, raw ?? join('logs', 'bridge.log'));
+  // Relative to the runtime root, so a read-only install still logs into the user's state dir.
+  return resolve(runtimeRoot, raw ?? join('logs', 'bridge.log'));
 }
 
 export const config = {
@@ -88,7 +158,10 @@ export const config = {
   },
   paths: {
     ffmpeg: optional('FFMPEG_PATH') ?? 'ffmpeg',
-    audioTap: optional('AUDIOTAP_PATH') ?? defaultTapPath,
+    audioTap: optional('AUDIOTAP_PATH') ?? defaultAudioTapPath(),
+    /** PipeWire CLI tools used as the Linux capture helper. */
+    pwRecord: optional('PWRECORD_PATH') ?? 'pw-record',
+    pwDump: optional('PWDUMP_PATH') ?? 'pw-dump',
     /** Persistent UTF-8 JSON-lines log. Set LOG_FILE=off to keep logs in memory/console only. */
     logFile: logFile(),
   },

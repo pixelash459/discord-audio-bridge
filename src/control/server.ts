@@ -1,18 +1,20 @@
 import { randomBytes, timingSafeEqual } from 'node:crypto';
-import { createReadStream, existsSync, writeFileSync } from 'node:fs';
+import { createReadStream, existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
-import { extname, join, normalize, resolve, sep } from 'node:path';
+import { dirname, extname, join, normalize, resolve, sep } from 'node:path';
 import { WebSocketServer, type WebSocket } from 'ws';
 import type { Client } from 'discord.js';
 
-import { projectRoot } from '../config.ts';
+import { projectRoot, runtimeRoot } from '../config.ts';
 import { logger, onLog, recentLogs } from '../logger.ts';
 import { handleApi, buildSnapshot, ApiError } from './api.ts';
 
 const log = logger('control');
 
 const webRoot = resolve(projectRoot, 'web');
-const tokenPath = join(projectRoot, '.control-token');
+// Written into the writable runtime root: the repo in development, the user state dir when
+// installed read-only under /usr/share or Program Files.
+const tokenPath = join(runtimeRoot, '.control-token');
 
 const MIME: Record<string, string> = {
   '.html': 'text/html; charset=utf-8',
@@ -85,6 +87,7 @@ export class ControlServer {
       });
     });
 
+    mkdirSync(dirname(tokenPath), { recursive: true });
     writeFileSync(tokenPath, JSON.stringify({ port: this.port, token: this.token }), 'utf8');
 
     // One broadcast loop for every client: cheap, and keeps all panels in step.

@@ -139,7 +139,9 @@ function renderRouteHint() {
   button.disabled = !ready || requestRunning;
   button.textContent = state?.sessions.length ? 'Apply source & destination' : 'Start stream';
   if (!routeOptions.sources.audioTapBuilt && $('source-kind').value !== 'dshow') {
-    hint.textContent = 'AudioTap is not built. Choose Cable / DirectShow or build AudioTap on the host PC.';
+    hint.textContent = routeOptions.platform === 'linux'
+      ? 'The PipeWire capture tools are missing on the host. Install them (e.g. "apt install pipewire-utils"), then restart the bridge.'
+      : 'AudioTap is not built. Choose Cable / DirectShow or build AudioTap on the host PC.';
   } else if (!channel) {
     hint.textContent = 'Choose a Discord server and a voice channel.';
   } else if (!selectedSource) {

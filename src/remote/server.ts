@@ -1,8 +1,8 @@
 import { randomBytes, timingSafeEqual } from 'node:crypto';
-import { createReadStream, existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { createReadStream, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { networkInterfaces } from 'node:os';
-import { extname, join, normalize, resolve, sep } from 'node:path';
+import { extname, join, normalize, resolve, sep, dirname } from 'node:path';
 import {
   ChannelType,
   PermissionFlagsBits,
@@ -12,8 +12,9 @@ import {
 
 import { listDshowDevices } from '../audio/encoder.ts';
 import { isAudioTapBuilt, listDevices, listProcesses } from '../audio/tap.ts';
-import { config, projectRoot } from '../config.ts';
+import { config, projectRoot, runtimeRoot } from '../config.ts';
 import { logger } from '../logger.ts';
+import { IS_WINDOWS } from '../platform.ts';
 import {
   allSessions,
   endSession,
@@ -24,7 +25,8 @@ import {
 
 const log = logger('remote');
 const webRoot = resolve(projectRoot, 'remote');
-const tokenPath = join(projectRoot, '.remote-token');
+// Runtime root rather than project root: packaged installs cannot write into /usr/share.
+const tokenPath = join(runtimeRoot, '.remote-token');
 
 const MIME: Record<string, string> = {
   '.html': 'text/html; charset=utf-8',
@@ -54,6 +56,7 @@ function loadToken(configured?: string): string {
   }
 
   const token = randomBytes(32).toString('base64url');
+  mkdirSync(dirname(tokenPath), { recursive: true });
   writeFileSync(tokenPath, `${token}\n`, { encoding: 'utf8', mode: 0o600 });
   return token;
 }
@@ -144,6 +147,7 @@ async function remoteOptions(client: Client): Promise<unknown> {
     }),
   ]);
   return {
+    platform: process.platform,
     guilds: client.guilds.cache.map((guild) => {
       const me = guild.members.me;
       return {
@@ -337,8 +341,16 @@ export class RemoteServer {
     if (route === 'POST /api/stream') {
       if (!input.channelId) throw new RemoteApiError(400, 'channelId is required.');
       const source = validateSource(input.source);
+      if (source.kind === 'dshow' && !IS_WINDOWS) {
+        throw new RemoteApiError(400, 'DirectShow sources are Windows-only.');
+      }
       if (source.kind !== 'dshow' && !isAudioTapBuilt()) {
-        throw new RemoteApiError(409, 'AudioTap is not built, so only cable sources are available.');
+        throw new RemoteApiError(
+          409,
+          IS_WINDOWS
+            ? 'AudioTap is not built, so only cable sources are available.'
+            : 'The PipeWire capture tools are missing on the host, so nothing is capturable.',
+        );
       }
       const channel = requireChannel(this.#client, input.guildId, input.channelId);
       const session = await startOrRetarget(channel, source, resolveBitrate(channel, input.bitrate));

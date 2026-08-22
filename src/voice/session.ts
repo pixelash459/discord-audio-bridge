@@ -16,7 +16,8 @@ import type { VoiceBasedChannel } from 'discord.js';
 import { config, DISCORD_AUDIO } from '../config.ts';
 import { logger } from '../logger.ts';
 import { OpusEncoder, probeDshowFormat, type DshowFormat, type EncoderInput } from '../audio/encoder.ts';
-import { Tap, type TapStats } from '../audio/tap.ts';
+import { startCapture, type CaptureTap, type TapStats } from '../audio/tap.ts';
+import { IS_WINDOWS } from '../platform.ts';
 
 const log = logger('session');
 
@@ -91,7 +92,7 @@ export class BridgeSession {
   #muted = false;
   #mutation: Promise<void> = Promise.resolve();
 
-  #tap: Tap | null = null;
+  #tap: CaptureTap | null = null;
   #encoder: OpusEncoder | null = null;
   #captureFormat = 'starting';
   #qualityNote: string | null = null;
@@ -312,9 +313,12 @@ export class BridgeSession {
     });
 
     let input: EncoderInput;
-    let pcm: Tap['stream'] | undefined;
+    let pcm: CaptureTap['stream'] | undefined;
 
     if (this.#source.kind === 'dshow') {
+      if (!IS_WINDOWS) {
+        throw new Error('DirectShow sources are Windows-only. On Linux, capture an app or a device.');
+      }
       const probed = await probeDshowFormat(this.#source.name);
       input = { kind: 'dshow', name: this.#source.name, format: probed ?? undefined };
 
@@ -326,7 +330,7 @@ export class BridgeSession {
         this.#qualityNote = 'This device would not report its formats, so ffmpeg negotiated on its own.';
       }
     } else {
-      const tap = await Tap.start(
+      const tap = await startCapture(
         this.#source.kind === 'process'
           ? { pid: this.#source.pid, exclude: this.#source.exclude, gainDb: this.#gainDb }
           : { deviceId: this.#source.id, gainDb: this.#gainDb },
@@ -364,6 +368,14 @@ export class BridgeSession {
       // An intentionally replaced encoder can report its final pipe error after the new one starts.
       if (this.#encoder !== encoder || this.#changingAudio) return;
       log.error('encoder stream error', error);
+      void this.#restartAudio();
+    });
+
+    // The capture stream dying must restart the pipeline too. Without this listener the error
+    // would be unhandled on a piped stream and could take the whole process down.
+    pcm?.once('error', (error: Error) => {
+      if (this.#changingAudio || this.#restarting) return;
+      log.error('capture stream error', error);
       void this.#restartAudio();
     });
 

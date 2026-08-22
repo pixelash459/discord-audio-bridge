@@ -6,7 +6,8 @@ import { config, projectRoot } from '../config.ts';
 import { logger } from '../logger.ts';
 import { collectDiagnostics } from '../commands.ts';
 import { listDshowDevices } from '../audio/encoder.ts';
-import { isAudioTapBuilt, listDevices, listProcesses } from '../audio/tap.ts';
+import { captureBackend, isAudioTapBuilt, listDevices, listProcesses } from '../audio/tap.ts';
+import { IS_WINDOWS } from '../platform.ts';
 import {
   allSessions,
   endSession,
@@ -63,6 +64,9 @@ export interface Snapshot {
   };
   sessions: SessionStatus[];
   capabilities: {
+    platform: NodeJS.Platform;
+    /** 'wasapi' on Windows, 'pipewire' on Linux, null when no per-app backend is usable. */
+    captureBackend: string | null;
     audioTapBuilt: boolean;
     audioTapPath: string;
     ffmpegPath: string;
@@ -92,6 +96,8 @@ export async function buildSnapshot(client: Client): Promise<Snapshot> {
     },
     sessions: allSessions().map((session) => session.status()),
     capabilities: {
+      platform: process.platform,
+      captureBackend: captureBackend(),
       audioTapBuilt: isAudioTapBuilt(),
       audioTapPath: config.paths.audioTap,
       ffmpegPath: config.paths.ffmpeg,
@@ -194,6 +200,10 @@ function guilds(client: Client): GuildView[] {
 function runScript(script: string): Promise<{ ok: boolean; output: string }> {
   return new Promise((done) => {
     const started = performance.now();
+    if (script === 'build:native' && !IS_WINDOWS) {
+      done({ ok: false, output: 'Building AudioTap is Windows-only. On Linux, install pipewire-utils instead.' });
+      return;
+    }
     log.info(`starting npm script: ${script}`);
     const child = spawn('npm', ['run', script], {
       cwd: projectRoot,
@@ -268,10 +278,15 @@ export async function handleApi(client: Client, req: IncomingMessage, url: URL):
 
       if (!input.guildId || !input.channelId) throw new ApiError(400, 'guildId and channelId are required.');
       if (!input.source?.kind) throw new ApiError(400, 'A source is required.');
+      if (input.source.kind === 'dshow' && !IS_WINDOWS) {
+        throw new ApiError(400, 'DirectShow sources are Windows-only. Capture an app or a device instead.');
+      }
       if (input.source.kind !== 'dshow' && !isAudioTapBuilt()) {
         throw new ApiError(
           409,
-          'AudioTap is not built, so only DirectShow sources work. Build it from the Setup tab.',
+          IS_WINDOWS
+            ? 'AudioTap is not built, so only DirectShow sources work. Build it from the Setup tab.'
+            : 'The PipeWire capture tools are missing, so nothing is capturable. Install pipewire-utils on the host.',
         );
       }
 

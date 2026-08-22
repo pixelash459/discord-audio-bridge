@@ -3,6 +3,7 @@ name: CI
 on:
   push:
     branches: [main]
+    tags: ['v*']
   pull_request:
   workflow_dispatch:
 
@@ -14,17 +15,21 @@ permissions:
   contents: read
 
 jobs:
-  # The bot half is platform-independent to typecheck, so it runs on Linux where runners are
-  # cheapest and fastest.
-  bot:
-    name: Bot (TypeScript)
+  # The bot half is platform-independent to check, so this runs on Linux where runners are
+  # cheapest — twice: on the oldest Node the bot supports (runtime type stripping) and current.
+  check:
+    name: Bot (Node ${{ matrix.node }})
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        node: ['22.18', '26']
     steps:
       - uses: actions/checkout@v4
 
       - uses: actions/setup-node@v4
         with:
-          node-version-file: .nvmrc
+          node-version: ${{ matrix.node }}
           cache: npm
 
       - run: npm ci
@@ -32,7 +37,7 @@ jobs:
       - name: Typecheck
         run: npm run typecheck
 
-      - name: Verify the sources actually load
+      - name: Verify the sources actually load and the pacer keeps real time
         run: npm run smoke
 
   # AudioTap and the desktop shell are Windows-only by construction.
@@ -44,7 +49,7 @@ jobs:
 
       - uses: actions/setup-dotnet@v4
         with:
-          dotnet-version: "9.0.x"
+          dotnet-version: '9.0.x'
 
       - name: Build AudioTap
         run: dotnet build native/AudioTap/AudioTap.csproj -c Release --nologo -warnaserror
@@ -62,13 +67,7 @@ jobs:
           Write-Host "AudioTap produced valid JSON"
         shell: pwsh
 
-  # Catches shell scripts that would fail the moment a contributor ran them.
-  scripts:
-    name: PowerShell
-    runs-on: windows-latest
-    steps:
-      - uses: actions/checkout@v4
-
+      # Catches shell scripts that would fail the moment a contributor ran them.
       - name: Parse every script
         shell: pwsh
         run: |
@@ -84,3 +83,98 @@ jobs:
             }
           }
           if ($failed) { exit 1 }
+
+  # One package per OS/arch. The executable embeds a Node runtime, so each target builds on its
+  # own runner: SEA generation is native-only by design (a build artifact of the host binary).
+  package:
+    name: Package ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: windows-x64
+            os: windows-latest
+          - name: linux-x64
+            os: ubuntu-latest
+            nfpm-arch: amd64
+            appimage-arch: x86_64
+          - name: linux-arm64
+            os: ubuntu-24.04-arm
+            nfpm-arch: arm64
+            appimage-arch: aarch64
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          # The bot runs on 22.18+, but building single executables needs --build-sea (Node 26+).
+          node-version: '26'
+          cache: npm
+
+      - run: npm ci
+
+      - name: Build AudioTap
+        if: runner.os == 'Windows'
+        run: npm run build:native
+        shell: pwsh
+
+      - name: Regenerate the icon (proves the generator still runs)
+        run: node scripts/gen-icon.mjs
+
+      - name: Install nfpm
+        if: runner.os == 'Linux'
+        run: |
+          curl -fsSL "https://github.com/goreleaser/nfpm/releases/download/v2.47.0/nfpm_2.47.0_linux_${{ matrix.nfpm-arch }}.tar.gz" \
+            | tar -xz -C /usr/local/bin nfpm
+          nfpm --version
+
+      - name: Install appimagetool
+        if: runner.os == 'Linux'
+        run: |
+          curl -fsSL -o /usr/local/bin/appimagetool \
+            "https://github.com/AppImage/AppImageKit/releases/download/continuous/appimagetool-${{ matrix.appimage-arch }}.AppImage"
+          chmod +x /usr/local/bin/appimagetool
+          appimagetool --version
+
+      - name: Package
+        run: npm run package
+
+      - name: Sanity-check the executable
+        shell: bash
+        run: |
+          exe="dist/stage/discord-audio-bridge/discord-audio-bridge"
+          if [[ "$RUNNER_OS" == "Windows" ]]; then exe="$exe.exe"; fi
+          "$exe" --version
+          "$exe" --doctor > doctor.log 2>&1 || { cat doctor.log; exit 1; }
+          grep -q "ffmpeg" doctor.log
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: packages-${{ matrix.name }}
+          path: dist/release/*
+          if-no-files-found: error
+
+  # A tag (v1.2.3) publishes every matrix artifact as a GitHub Release.
+  release:
+    name: Release
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [check, native, package]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: packages-*
+          path: dist/release
+          merge-multiple: true
+
+      - name: Create the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          ls -la dist/release/
+          gh release create "${GITHUB_REF_NAME}" dist/release/* \
+            --title "discord-audio-bridge ${GITHUB_REF_NAME}" \
+            --generate-notes

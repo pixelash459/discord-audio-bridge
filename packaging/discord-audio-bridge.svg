@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256">
+  <!-- Same drawing scripts/gen-icon.mjs renders to PNG for AppImage use. -->
+  <rect x="0" y="0" width="256" height="256" rx="48" fill="#5865f2"/>
+  <g fill="#ffffff">
+    <rect x="47"  y="100" width="14" height="56" rx="7"/>
+    <rect x="71"  y="85"  width="14" height="86" rx="7"/>
+    <rect x="95"  y="62"  width="14" height="132" rx="7"/>
+    <rect x="119" y="90"  width="14" height="76" rx="7"/>
+    <rect x="143" y="55"  width="14" height="146" rx="7"/>
+    <rect x="167" y="94"  width="14" height="68" rx="7"/>
+    <rect x="191" y="76"  width="14" height="104" rx="7"/>
+  </g>
+</svg>

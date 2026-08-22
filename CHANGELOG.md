@@ -6,8 +6,27 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- **Linux support.** Per-application capture on Linux via PipeWire: `pw-record --raw --target`
+  pulls 48 kHz float from any one application's stream node, and a TypeScript pacer
+  (the counterpart of AudioTap's PacedWriter) keeps the stream perfectly real time — silence
+  fill while the app is idle, drift trimming, and live metering. Device capture targets a sink's
+  monitor. Everything else (panel, remote dashboard, slash commands, encoding) is unchanged.
+- **Single-file executables and installers.** `npm run package` bundles the bot with esbuild and
+  embeds it into a Node single executable (`--build-sea`), producing a Windows x64 zip, Linux
+  x64/arm64 tarballs, `.deb`, `.rpm`, and AppImages. Tagging a version publishes all of them as a
+  GitHub Release via CI. The packaged binary supports `--doctor`, `--version`, and
+  `--project-root`; runtime state lands in `~/.local/state/discord-audio-bridge` (or
+  `%APPDATA%`) when the install root is read-only, and Linux packages read
+  `/etc/discord-audio-bridge/env` for system-wide configuration.
+- The smoke test now exercises the pacer for real: real-time pacing accuracy, silence fill, and
+  dBFS metering against a synthetic sine.
+
 ### Fixed
 
+- A capture stream dying mid-session can no longer crash the process with an unhandled stream
+  error; it restarts the pipeline, like every other audio failure.
 - The control panel now starts *before* signing in to Discord. It previously started inside the
   ready handler, so the Setup tab -- the one screen whose purpose is entering a bot token -- was
   unreachable until a valid token already existed. Saving credentials there signs in immediately

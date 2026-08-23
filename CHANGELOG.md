@@ -6,6 +6,23 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [1.2.1] - 2026-08-23
+
+### Changed
+
+- The local panel now exchanges its bearer credential for an HttpOnly, same-origin browser-session
+  cookie before opening its WebSocket. Existing 1.2.0 subprotocol-authenticated pages remain
+  compatible during an upgrade.
+
+### Fixed
+
+- A failed or browser-incompatible WebSocket handshake no longer leaves the packaged application
+  behind a permanent “Waiting for the bot” overlay. The panel proves HTTP connectivity first and
+  transparently falls back to authenticated state polling while live updates reconnect.
+- Remote gain and bitrate sliders once again update their visible values while they are dragged.
+- CI now exercises the exact bearer-to-cookie exchange and cookie-authenticated WebSocket used by
+  browsers, in addition to the legacy upgrade path.
+
 ## [1.2.0] - 2026-08-23
 
 ### Added
@@ -160,7 +177,8 @@ First release.
 - ffmpeg's Ogg muxer defaults to one-second pages, which starves the Discord player. This project
   sets `-page_duration 20000`; measured, that is 163 ms to first packet versus 3186 ms.
 
-[Unreleased]: https://github.com/AshutoshChaudhary-lgtm/discord-audio-bridge/compare/v1.2.0...HEAD
+[Unreleased]: https://github.com/AshutoshChaudhary-lgtm/discord-audio-bridge/compare/v1.2.1...HEAD
+[1.2.1]: https://github.com/AshutoshChaudhary-lgtm/discord-audio-bridge/compare/v1.2.0...v1.2.1
 [1.2.0]: https://github.com/AshutoshChaudhary-lgtm/discord-audio-bridge/compare/v1.1.3...v1.2.0
 [1.1.3]: https://github.com/AshutoshChaudhary-lgtm/discord-audio-bridge/compare/v1.1.2...v1.1.3
 [1.1.2]: https://github.com/AshutoshChaudhary-lgtm/discord-audio-bridge/compare/v1.1.1...v1.1.2

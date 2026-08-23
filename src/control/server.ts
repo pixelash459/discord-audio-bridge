@@ -22,6 +22,7 @@ import { handleApi, buildSnapshot, ApiError } from './api.ts';
 const log = logger('control');
 
 const webRoot = resolve(projectRoot, 'web');
+const SESSION_COOKIE = 'bridge_control_session';
 // Written into the writable runtime root: the repo in development, the user state dir when
 // installed read-only under /usr/share or Program Files.
 
@@ -158,7 +159,15 @@ export class ControlServer {
     const supplied = protocols.find((value) => value.startsWith('auth.'))?.slice(5) ?? '';
     const actual = Buffer.from(this.token);
     const candidate = Buffer.from(supplied);
-    return protocols.includes('bridge-v1') && candidate.length === actual.length && timingSafeEqual(candidate, actual);
+    const cookie = (req.headers.cookie ?? '')
+      .split(';')
+      .map((part) => part.trim())
+      .find((part) => part.startsWith(`${SESSION_COOKIE}=`))
+      ?.slice(SESSION_COOKIE.length + 1) ?? '';
+    const cookieValue = Buffer.from(cookie);
+    const protocolTokenValid = candidate.length === actual.length && timingSafeEqual(candidate, actual);
+    const cookieValid = cookieValue.length === actual.length && timingSafeEqual(cookieValue, actual);
+    return protocols.includes('bridge-v1') && (protocolTokenValid || cookieValid);
   }
 
   #attach(ws: WebSocket): void {
@@ -222,6 +231,17 @@ export class ControlServer {
       }
 
       try {
+        if (`${req.method} ${url.pathname}` === 'POST /api/session') {
+          // Browsers cannot set an Authorization header on WebSocket handshakes. Exchange the
+          // already-authenticated bearer token for an HttpOnly, same-origin session cookie rather
+          // than smuggling credentials through Sec-WebSocket-Protocol. The cookie expires with the
+          // browser session and becomes useless whenever the bridge restarts and rotates its token.
+          res.setHeader(
+            'set-cookie',
+            `${SESSION_COOKIE}=${this.token}; HttpOnly; SameSite=Strict; Path=/`,
+          );
+          return json(res, 200, { ok: true });
+        }
         if (`${req.method} ${url.pathname}` === 'POST /api/app/quit') {
           json(res, 200, { quitting: true });
           setTimeout(() => this.#onQuit?.(), 50);

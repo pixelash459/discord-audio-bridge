@@ -277,8 +277,8 @@ document.addEventListener('pointerdown', (event) => {
   if (event.target.matches('input[type="range"]')) editing = true;
 });
 document.addEventListener('input', (event) => {
-  if (event.target.matches('.gain')) event.target.closest('.control').querySelector('output').textContent = `${Number(event.target.value).toFixed(1)} dB`;
-  if (event.target.matches('.bitrate')) event.target.closest('.control').querySelector('output').textContent = `${event.target.value} kbps`;
+  if (event.target.matches('.gain')) event.target.closest('.control').querySelector('.gain-value').textContent = `${Number(event.target.value).toFixed(1)} dB`;
+  if (event.target.matches('.bitrate')) event.target.closest('.control').querySelector('.bitrate-value').textContent = `${event.target.value} kbps`;
 });
 document.addEventListener('change', async (event) => {
   if (!event.target.matches('input[type="range"]')) return;

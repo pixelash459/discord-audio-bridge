@@ -23,6 +23,17 @@ assert.equal(result.response.status, 401, 'query-string control tokens must be r
 result = await request(`${controlBase}/api/state`, { headers: { authorization: `Bearer ${controlToken}` } });
 assert.equal(result.response.status, 200);
 
+result = await request(`${controlBase}/api/session`, {
+  method: 'POST',
+  headers: { authorization: `Bearer ${controlToken}`, 'content-type': 'application/json' },
+  body: '{}',
+});
+assert.equal(result.response.status, 200);
+const sessionCookie = result.response.headers.get('set-cookie')?.split(';')[0];
+assert.match(sessionCookie ?? '', /^bridge_control_session=[A-Za-z0-9_-]{32}$/);
+assert.match(result.response.headers.get('set-cookie') ?? '', /HttpOnly/i);
+assert.match(result.response.headers.get('set-cookie') ?? '', /SameSite=Strict/i);
+
 result = await request(`${controlBase}/api/state`, {
   headers: { authorization: `Bearer ${controlToken}`, origin: 'http://evil.invalid' },
 });
@@ -53,7 +64,9 @@ assert.equal(
 
 const websocketBase = controlBase.replace(/^http/, 'ws');
 await new Promise((resolve, reject) => {
-  const socket = new WebSocket(`${websocketBase}/ws`, ['bridge-v1', `auth.${controlToken}`]);
+  const socket = new WebSocket(`${websocketBase}/ws`, ['bridge-v1'], {
+    headers: { cookie: sessionCookie, origin: controlBase },
+  });
   const timer = setTimeout(() => reject(new Error('WebSocket timed out.')), 3_000);
   socket.once('message', () => {
     clearTimeout(timer);
@@ -63,4 +76,16 @@ await new Promise((resolve, reject) => {
   socket.once('error', reject);
 });
 
-console.log('live HTTP/WebSocket security integration passed');
+// Keep the previous protocol-token handshake valid for already-open 1.2.0 pages during upgrades.
+await new Promise((resolve, reject) => {
+  const socket = new WebSocket(`${websocketBase}/ws`, ['bridge-v1', `auth.${controlToken}`]);
+  const timer = setTimeout(() => reject(new Error('Legacy WebSocket timed out.')), 3_000);
+  socket.once('message', () => {
+    clearTimeout(timer);
+    socket.close();
+    resolve();
+  });
+  socket.once('error', reject);
+});
+
+console.log('live HTTP/session-cookie/WebSocket security integration passed');

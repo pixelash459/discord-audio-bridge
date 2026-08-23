@@ -29,6 +29,11 @@
   <url type="homepage">https://github.com/AshutoshChaudhary-lgtm/discord-audio-bridge</url>
   <url type="bugtracker">https://github.com/AshutoshChaudhary-lgtm/discord-audio-bridge/issues</url>
   <releases>
+    <release version="1.2.1" date="2026-08-23">
+      <description>
+        <p>Prevents a failed WebSocket handshake from blocking the UI by using a browser session cookie and authenticated HTTP fallback.</p>
+      </description>
+    </release>
     <release version="1.2.0" date="2026-08-23">
       <description>
         <p>Redesigns both control surfaces and strengthens capture reliability, tailnet identity, authentication, validation, and HTTP security.</p>

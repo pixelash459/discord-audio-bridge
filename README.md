@@ -259,8 +259,10 @@ attaches to that process instead of starting another one.
 The panel binds to `127.0.0.1` only and is never reachable from the network. Because loopback alone
 is not authentication, every API call and WebSocket upgrade also requires a token minted at startup
 and written to `.control-token`. Access tokens arrive in URL fragments (not HTTP request URLs), are
-removed from the address bar, and are sent as Bearer or WebSocket-subprotocol credentials. Both web
-services enforce origin/Host checks, conservative HTTP limits, security headers, input size/type
+removed from the address bar, and are sent as Bearer credentials. The local panel exchanges its
+credential for an HttpOnly, same-origin browser-session cookie before opening the WebSocket and
+falls back to authenticated HTTP polling if live updates cannot connect. Both web services enforce
+origin/Host checks, conservative HTTP limits, security headers, input size/type
 validation, and rate limits. The bot token is write-only over the API—reads report only whether one
 is set. Set `CONTROL_PORT=0` to disable the panel entirely. See [SECURITY.md](SECURITY.md).
 
@@ -463,7 +465,7 @@ can unsuppress itself and become a speaker.
 with bounded backoff and gives up after five attempts unless the pipeline remains healthy for 30
 seconds. Current capture children are tracked and stopped during stream replacement and shutdown.
 Overlapping source refreshes also share a short-lived enumeration result instead of spawning duplicate
-helpers. If an older build left helpers behind, stop those once, then upgrade; 1.2.0 prevents the
+helpers. If an older build left helpers behind, stop those once, then upgrade; 1.2.0 and later prevent the
 churn and orphaning paths that caused this.
 
 **`No compatible encryption modes`, or close code 4017.** Discord requires DAVE end-to-end

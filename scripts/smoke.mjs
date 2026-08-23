@@ -311,6 +311,19 @@ if (!/becameReady[\s\S]*if \(becameReady\) void loadGuilds\(\)/.test(webApp)) {
   process.stdout.write('  ok    web guild refresh on bot readiness\n');
 }
 
+if (
+  !controlServerSource.includes('POST /api/session') ||
+  !controlServerSource.includes('bridge_control_session') ||
+  !webApp.includes("await post('session')") ||
+  !webApp.includes('startPolling()') ||
+  !webApp.includes("new WebSocket(`${protocol}//${location.host}/ws`, ['bridge-v1'])")
+) {
+  failed++;
+  process.stdout.write('  FAIL  browser-compatible control connection fallback\n');
+} else {
+  process.stdout.write('  ok    browser-compatible control connection fallback\n');
+}
+
 if (webApp.includes("addEventListener('pointerup', commit)")) {
   failed++;
   process.stdout.write('  FAIL  sliders submit only once\n');
@@ -353,6 +366,13 @@ if (
   process.stdout.write('  FAIL  remote source/destination controls\n');
 } else {
   process.stdout.write('  ok    remote source/destination controls\n');
+}
+
+if (remoteApp.includes("querySelector('output')")) {
+  failed++;
+  process.stdout.write('  FAIL  remote sliders target their current value labels\n');
+} else {
+  process.stdout.write('  ok    remote sliders target their current value labels\n');
 }
 
 const integerPipeArgs = buildArgs({

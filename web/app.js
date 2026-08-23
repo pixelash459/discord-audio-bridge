@@ -763,47 +763,127 @@ function appendLog(entry) {
 
 let socket;
 let retryDelay = 500;
+let reconnectTimer;
+let pollTimer;
 
-function connect() {
+function showConnectionFailure(error) {
+  $('disconnected').hidden = false;
+  $('disconnected-detail').textContent = token
+    ? `The local control server is unavailable. ${error instanceof Error ? error.message : String(error)}`
+    : 'No control token. Reopen Discord Audio Bridge from the Applications menu.';
+}
+
+async function refreshState() {
+  const state = await api('state');
+  render(state);
+  $('disconnected').hidden = true;
+}
+
+function startPolling() {
+  if (pollTimer) return;
+  const poll = async () => {
+    try {
+      await refreshState();
+    } catch (error) {
+      showConnectionFailure(error);
+    }
+  };
+  void poll();
+  pollTimer = setInterval(() => void poll(), 1000);
+}
+
+function stopPolling() {
+  if (!pollTimer) return;
+  clearInterval(pollTimer);
+  pollTimer = undefined;
+}
+
+function scheduleReconnect() {
+  clearTimeout(reconnectTimer);
+  retryDelay = Math.min(retryDelay * 1.6, 5000);
+  reconnectTimer = setTimeout(() => void connect(), retryDelay);
+}
+
+async function connect() {
+  if (!token) {
+    showConnectionFailure(new Error('No control token.'));
+    return;
+  }
+
+  try {
+    // Establish an HttpOnly same-origin session before opening the WebSocket. Supplying secrets as
+    // fake subprotocol names is legal but inconsistently handled by browsers and intermediaries.
+    await post('session');
+  } catch {
+    startPolling();
+    scheduleReconnect();
+    return;
+  }
+
   const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
-  socket = new WebSocket(`${protocol}//${location.host}/ws`, ['bridge-v1', `auth.${token}`]);
+  try {
+    socket = new WebSocket(`${protocol}//${location.host}/ws`, ['bridge-v1']);
+  } catch {
+    startPolling();
+    scheduleReconnect();
+    return;
+  }
+  const activeSocket = socket;
 
-  socket.addEventListener('open', () => {
+  activeSocket.addEventListener('open', () => {
     retryDelay = 500;
+    stopPolling();
     $('disconnected').hidden = true;
-    void loadGuilds();
-    void loadSources();
   });
 
-  socket.addEventListener('message', (event) => {
-    const payload = JSON.parse(event.data);
-    if (payload.type === 'state') render(payload.state);
-    else if (payload.type === 'log') appendLog(payload.entry);
-    else if (payload.type === 'history') {
-      $('log').replaceChildren();
-      for (const entry of payload.entries) appendLog(entry);
+  activeSocket.addEventListener('message', (event) => {
+    try {
+      const payload = JSON.parse(event.data);
+      if (payload.type === 'state') render(payload.state);
+      else if (payload.type === 'log') appendLog(payload.entry);
+      else if (payload.type === 'history') {
+        $('log').replaceChildren();
+        for (const entry of payload.entries) appendLog(entry);
+      }
+    } catch (error) {
+      fail(error);
     }
   });
 
-  socket.addEventListener('close', () => {
-    $('disconnected').hidden = false;
-    $('disconnected-detail').textContent = token
-      ? 'Reconnecting to the control server…'
-      : 'No control token. Open the URL printed in the terminal.';
-    // Back off to 5s so a stopped bot does not spin the connection forever.
-    retryDelay = Math.min(retryDelay * 1.6, 5000);
-    setTimeout(connect, retryDelay);
+  activeSocket.addEventListener('close', () => {
+    if (socket === activeSocket) socket = undefined;
+    // Keep the interface usable over authenticated HTTP while live updates reconnect.
+    startPolling();
+    scheduleReconnect();
   });
 
-  socket.addEventListener('error', () => socket.close());
+  activeSocket.addEventListener('error', () => activeSocket.close());
 }
 
-connect();
+async function bootstrap() {
+  if (!token) {
+    showConnectionFailure(new Error('No control token.'));
+    return;
+  }
+  try {
+    // Prove normal HTTP access first. A WebSocket problem must never cover a healthy application
+    // with a permanent waiting screen.
+    await refreshState();
+    await Promise.all([loadGuilds(), loadSources()]);
+  } catch (error) {
+    showConnectionFailure(error);
+    setTimeout(() => void bootstrap(), 1000);
+    return;
+  }
+  void connect();
+}
+
+void bootstrap();
 
 // The process list goes stale as apps come and go; a slow poll keeps it honest without hammering
 // AudioTap, which spawns a process on every enumeration.
 setInterval(() => {
-  if (document.visibilityState === 'visible' && socket?.readyState === WebSocket.OPEN) {
+  if (document.visibilityState === 'visible' && ui.state) {
     void loadSources();
   }
 }, 10_000);

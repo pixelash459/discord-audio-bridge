@@ -22,8 +22,9 @@ runtime tokens are gitignored and tightened to user-only filesystem permissions 
 not reachable from the network. Loopback is not authentication on its own, so every `/api` request
 and WebSocket upgrade also requires a token minted at startup and written to `.control-token`
 (also gitignored). It is delivered in a URL fragment, stripped from the address bar, and then sent
-in an Authorization header or WebSocket subprotocol rather than in request URLs. Static assets are
-served without a token because they contain nothing secret.
+in an Authorization header rather than in request URLs. An authenticated exchange creates an
+HttpOnly, same-origin, session-scoped cookie for WebSocket handshakes. Static assets are served
+without a token because they contain nothing secret.
 
 Set `CONTROL_PORT=0` to disable the local panel entirely and use slash commands and/or the
 restricted remote dashboard.

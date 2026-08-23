@@ -1,0 +1,19 @@
+{
+  "name": "discord-audio-bridge-app",
+  "version": "0.1.0",
+  "description": "Desktop app shell for discord-audio-bridge: native window, tray, and hotkeys around the bridge's own control panel.",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "tauri": "tauri",
+    "dev": "tauri dev",
+    "build": "tauri build",
+    "icon": "node icons/gen-icon.mjs && tauri icon icons-src/appicon.png"
+  },
+  "dependencies": {
+    "@tauri-apps/api": "^2.11.1"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2.11.4"
+  }
+}

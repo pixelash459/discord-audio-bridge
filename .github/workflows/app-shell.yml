@@ -1,0 +1,59 @@
+name: app-shell
+
+on:
+  push:
+    branches: [feat/app-shell]
+    paths:
+      - 'desktop/TauriApp/**'
+      - '.github/workflows/app-shell.yml'
+  pull_request:
+    paths:
+      - 'desktop/TauriApp/**'
+      - '.github/workflows/app-shell.yml'
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: build (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        # ubuntu-22.04 keeps the glibc baseline low for the deb/rpm/AppImage outputs; the arm
+        # runner produces native Linux arm64 bundles.
+        os: [windows-latest, ubuntu-22.04, ubuntu-24.04-arm]
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        working-directory: desktop/TauriApp
+    steps:
+      - uses: actions/checkout@f548e57e544e1ff5a4c46bf1e1b8685f8e4a348a
+
+      - uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772
+        with:
+          toolchain: stable
+
+      - name: Install Linux webview dependencies
+        if: runner.os == 'Linux'
+        working-directory: .
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev build-essential curl wget file \
+            libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev
+
+      - name: Install npm dependencies
+        run: npm ci
+
+      - name: Build the app shell
+        run: npx tauri build
+
+      - name: Upload bundles
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: discord-audio-bridge-app-${{ matrix.os }}
+          path: |
+            desktop/TauriApp/src-tauri/target/release/bundle/**/*.exe
+            desktop/TauriApp/src-tauri/target/release/bundle/**/*.msi
+            desktop/TauriApp/src-tauri/target/release/bundle/**/*.deb
+            desktop/TauriApp/src-tauri/target/release/bundle/**/*.rpm
+            desktop/TauriApp/src-tauri/target/release/bundle/**/*.AppImage
+          if-no-files-found: error

@@ -6,6 +6,13 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- Cross-platform desktop shell in `desktop/TauriApp` (Tauri 2, Rust): a native window around the
+bridge's own control panel plus tray icon, global mute/stop/show hotkeys, single-instance
+launch, and attach-or-start supervision of the bridge — on Windows and Linux. Optional,
+behind its own build; nothing about the bot, the browser panel, or existing packaging changes.
+
 ## [1.4.1] - 2026-08-23
 
 ### Fixed

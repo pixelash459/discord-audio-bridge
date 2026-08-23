@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="color-scheme" content="dark" />
+  <title>Discord Audio Bridge</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <main class="shell" id="shell">
+    <header class="brand">
+      <span class="headphones" aria-hidden="true">🎧</span>
+      <h1>Discord Audio Bridge</h1>
+    </header>
+
+    <section class="card" aria-live="polite">
+      <div class="status">
+        <div id="spinner" class="spinner" aria-hidden="true"></div>
+        <p id="phase" class="phase">Looking for a running bridge…</p>
+        <p id="detail" class="detail">the control panel will appear here</p>
+      </div>
+
+      <div id="errorbox" class="errorbox" hidden>
+        <button id="retry" class="retry" type="button">Retry</button>
+        <button id="openlogs" class="openlogs" type="button">Open logs folder</button>
+      </div>
+
+      <details id="logsdetails" class="logs" hidden>
+        <summary>Bridge output</summary>
+        <pre id="logs"></pre>
+      </details>
+    </section>
+
+    <p class="hint">Close the window any time — the bridge keeps streaming from the tray.</p>
+  </main>
+
+  <script src="loader.js"></script>
+</body>
+</html>

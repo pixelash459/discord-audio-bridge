@@ -431,6 +431,9 @@ remote/              Restricted LAN/Tailscale dashboard. Plain HTML/CSS/JS.
 
 native/AudioTap/     C#. Per-process WASAPI capture (Windows only).
 desktop/BridgeApp/   C#. Framework-dependent WinForms + WebView2 shell and tray icon (Windows only).
+desktop/TauriApp/    Rust + Tauri 2. Cross-platform desktop shell (Windows and Linux): window,
+                     tray, global hotkeys, and single-instance launch around the same control
+                     panel. See desktop/TauriApp/README.md.
 
 scripts/             Build, package, and setup tooling. package.mjs produces every release
                      artifact; see docs/cross-platform.md for how the sausage is made.

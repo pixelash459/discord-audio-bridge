@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "main-capability",
+  "description": "The loader screen needs core defaults (events, window) to talk to the shell. All bridge control happens over the bridge's own authenticated loopback API once the panel loads.",
+  "windows": ["main"],
+  "permissions": ["core:default"]
+}

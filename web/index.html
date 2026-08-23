@@ -12,7 +12,8 @@
     />
   </head>
   <body>
-    <div id="disconnected" class="overlay" hidden>
+    <a class="skip-link" href="#main-content">Skip to controls</a>
+    <div id="disconnected" class="overlay" role="status" aria-live="polite" hidden>
       <div class="overlay-card">
         <div class="spinner"></div>
         <h2>Waiting for the bot</h2>
@@ -25,6 +26,7 @@
         <span class="brand-mark">🎧</span>
         <div>
           <h1>Discord Audio Bridge</h1>
+          <p class="brand-purpose">Share an app, not your whole desktop</p>
           <p id="bot-identity" class="muted">connecting…</p>
         </div>
       </div>
@@ -40,26 +42,30 @@
         <strong id="onboarding-title">Finish setting up</strong>
         <span id="onboarding-detail"></span>
       </div>
-      <button id="onboarding-action" class="btn primary small">Open Setup</button>
+      <button id="onboarding-action" class="btn primary small" type="button">Open Setup</button>
     </div>
 
-    <nav class="tabs" role="tablist">
-      <button class="tab active" role="tab" data-tab="stream">Stream</button>
-      <button class="tab" role="tab" data-tab="setup">Setup</button>
-      <button class="tab" role="tab" data-tab="logs">Logs</button>
+    <nav class="tabs" role="tablist" aria-label="Application sections">
+      <button class="tab active" type="button" role="tab" aria-selected="true" aria-controls="panel-stream" data-tab="stream">Stream</button>
+      <button class="tab" type="button" role="tab" aria-selected="false" aria-controls="panel-setup" tabindex="-1" data-tab="setup">Setup</button>
+      <button class="tab" type="button" role="tab" aria-selected="false" aria-controls="panel-logs" tabindex="-1" data-tab="logs">Logs</button>
     </nav>
 
-    <main>
+    <main id="main-content">
       <!-- ─────────────────────────────  STREAM  ───────────────────────────── -->
-      <section class="panel active" data-panel="stream">
+      <section id="panel-stream" class="panel active" role="tabpanel" data-panel="stream">
+        <div class="page-intro">
+          <div><p class="eyebrow">Audio route</p><h2>Choose where it goes, then what to play</h2></div>
+          <p>Your selection stays local until you press Start. You can change it without leaving Discord.</p>
+        </div>
         <div class="grid">
           <!-- Live session -->
           <article id="live-card" class="card span-2" hidden>
             <header class="card-head">
               <h2>Now streaming</h2>
               <div class="button-row">
-                <button id="mute-btn" class="btn ghost">Mute bot</button>
-                <button id="stop-btn" class="btn danger">Stop</button>
+                <button id="mute-btn" class="btn ghost" type="button">Mute bot</button>
+                <button id="stop-btn" class="btn danger" type="button">Stop</button>
               </div>
             </header>
 
@@ -109,19 +115,19 @@
 
             <div class="controls">
               <label class="control">
-                <span class="label">Gain <output id="gain-value">0.0 dB</output></span>
-                <input id="gain" type="range" min="-30" max="12" step="0.5" value="0" />
+                <span class="label">Gain <span id="gain-value">0.0 dB</span></span>
+                <input id="gain" type="range" min="-60" max="20" step="0.5" value="0" />
               </label>
               <label class="control">
-                <span class="label">Opus bitrate <output id="bitrate-value">—</output></span>
+                <span class="label">Opus bitrate <span id="bitrate-value">—</span></span>
                 <input id="bitrate" type="range" min="32" max="384" step="8" value="96" />
               </label>
             </div>
           </article>
 
           <!-- Destination -->
-          <article class="card">
-            <header class="card-head"><h2>Destination</h2></header>
+          <article class="card step-card">
+            <header class="card-head"><div class="step-heading"><span class="step-number">1</span><div><p class="eyebrow">Destination</p><h2>Pick a voice room</h2></div></div></header>
             <label class="field">
               <span class="label">Server</span>
               <select id="guild-select"></select>
@@ -131,36 +137,43 @@
               <select id="channel-select"></select>
             </label>
             <div id="channel-hint" class="notice info" hidden></div>
-            <button id="maximize-btn" class="btn ghost" hidden>Raise channel to server maximum</button>
+            <button id="maximize-btn" class="btn ghost" type="button" hidden>Raise channel to server maximum</button>
           </article>
 
           <!-- Source -->
-          <article class="card">
+          <article class="card step-card">
             <header class="card-head">
-              <h2>Source</h2>
-              <div class="seg" role="tablist">
-                <button class="seg-btn active" data-source="process">App</button>
-                <button class="seg-btn" data-source="device">Device</button>
-                <button class="seg-btn" data-source="dshow">Cable</button>
+              <div class="step-heading"><span class="step-number">2</span><div><p class="eyebrow">Source</p><h2>Pick what people hear</h2></div></div>
+              <div class="seg" role="group" aria-label="Source type">
+                <button class="seg-btn active" type="button" aria-pressed="true" data-source="process">App</button>
+                <button class="seg-btn" type="button" aria-pressed="false" data-source="device">Device</button>
+                <button class="seg-btn" type="button" aria-pressed="false" data-source="dshow">Cable</button>
               </div>
             </header>
 
             <div id="tap-missing" class="notice warn" hidden>
               <span id="tap-missing-text">
                 AudioTap is not built, so per-app capture is unavailable.
-                <button class="link" data-goto="setup">Build it in Setup →</button>
+                <button class="link" type="button" data-goto="setup">Build it in Setup →</button>
               </span>
             </div>
 
             <p id="source-hint" class="muted small"></p>
             <div id="source-list" class="source-list"></div>
-            <button id="refresh-btn" class="btn ghost small">Refresh</button>
+            <div class="card-actions">
+              <button id="refresh-btn" class="btn ghost small" type="button">Refresh sources</button>
+              <button id="start-btn" class="btn primary" type="button" disabled>Choose a source</button>
+            </div>
           </article>
         </div>
       </section>
 
       <!-- ─────────────────────────────  SETUP  ───────────────────────────── -->
-      <section class="panel" data-panel="setup">
+      <section id="panel-setup" class="panel" role="tabpanel" data-panel="setup">
+        <div class="page-intro">
+          <div><p class="eyebrow">Configuration</p><h2>Set up once, tune only when needed</h2></div>
+          <p>Secrets remain on this computer. Advanced settings stay out of the everyday route.</p>
+        </div>
         <div class="grid">
           <article class="card span-2">
             <header class="card-head"><h2>Discord credentials</h2></header>
@@ -172,7 +185,7 @@
             </p>
             <label class="field">
               <span class="label">Bot token <span id="token-set" class="pill ok" hidden>saved</span></span>
-              <input id="cfg-DISCORD_TOKEN" type="password" placeholder="leave blank to keep the current one" autocomplete="off" />
+              <input id="cfg-DISCORD_TOKEN" type="password" placeholder="leave blank to keep the current one" autocomplete="new-password" />
             </label>
             <div class="two-up">
               <label class="field">
@@ -211,7 +224,7 @@
           </article>
 
           <article class="card">
-            <header class="card-head"><h2>Paths</h2></header>
+            <header class="card-head"><h2>Advanced system settings</h2></header>
             <label class="field">
               <span class="label">ffmpeg</span>
               <input id="cfg-FFMPEG_PATH" type="text" placeholder="ffmpeg" />
@@ -259,14 +272,14 @@
           <article class="card span-2">
             <header class="card-head">
               <h2>Actions</h2>
-              <button id="save-btn" class="btn primary">Save settings</button>
+              <button id="save-btn" class="btn primary" type="button">Save settings</button>
             </header>
             <div id="save-notice" class="notice info" hidden></div>
             <div class="button-row">
-              <button id="build-btn" class="btn">Build AudioTap</button>
-              <button id="register-btn" class="btn">Register slash commands</button>
-              <button id="diag-btn" class="btn ghost">Run diagnostics</button>
-              <button id="quit-btn" class="btn ghost">Quit app</button>
+              <button id="build-btn" class="btn" type="button">Build AudioTap</button>
+              <button id="register-btn" class="btn" type="button">Register slash commands</button>
+              <button id="diag-btn" class="btn ghost" type="button">Run diagnostics</button>
+              <button id="quit-btn" class="btn ghost" type="button">Quit app</button>
             </div>
             <pre id="diag-output" class="output" hidden></pre>
           </article>
@@ -274,7 +287,11 @@
       </section>
 
       <!-- ─────────────────────────────  LOGS  ───────────────────────────── -->
-      <section class="panel" data-panel="logs">
+      <section id="panel-logs" class="panel" role="tabpanel" data-panel="logs">
+        <div class="page-intro">
+          <div><p class="eyebrow">Health</p><h2>Understand what the bridge is doing</h2></div>
+          <p>Warnings and errors stay readable; debug detail is available when you need it.</p>
+        </div>
         <article class="card">
           <header class="card-head">
             <h2>Log</h2>
@@ -285,7 +302,7 @@
                 <option value="warn">warnings and errors</option>
                 <option value="error">errors only</option>
               </select>
-              <button id="log-clear" class="btn ghost small">Clear</button>
+              <button id="log-clear" class="btn ghost small" type="button">Clear</button>
             </div>
           </header>
           <p id="log-file-hint" class="muted">Loading persistent log location…</p>
@@ -294,7 +311,7 @@
       </section>
     </main>
 
-    <div id="toast" class="toast" hidden></div>
+    <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
 
     <script type="module" src="/app.js"></script>
   </body>

@@ -26,11 +26,17 @@ $exe = Join-Path $output 'DiscordAudioBridge.exe'
 if (-not (Get-Command dotnet -ErrorAction SilentlyContinue)) {
     Write-Host ''
     Write-Host 'The .NET SDK is not installed.' -ForegroundColor Red
-    Write-Host '  Install it with:  winget install Microsoft.DotNet.SDK.9'
+    Write-Host '  Install it with:  winget install Microsoft.DotNet.SDK.10'
     Write-Host ''
     Write-Host 'You can still use the control panel without the desktop app:'
     Write-Host '  npm start   then open the URL it prints in any browser.'
     Write-Host ''
+    exit 1
+}
+
+$dotnetVersion = [version](((dotnet --version) -split '-')[0])
+if ($dotnetVersion.Major -lt 10) {
+    Write-Error ".NET 10 SDK is required (found $dotnetVersion). Install it with: winget install Microsoft.DotNet.SDK.10"
     exit 1
 }
 

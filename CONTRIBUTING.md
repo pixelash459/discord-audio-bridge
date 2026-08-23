@@ -16,8 +16,8 @@ npm run setup      # installs dependencies, builds AudioTap and the desktop shel
 
 `npm run setup` is safe to re-run and never overwrites an existing `.env`.
 
-You need Node 22.18+, ffmpeg with libopus, and .NET SDK 9+ for the two Windows projects. Windows 10
-build 19041 or newer is required for per-process capture.
+You need Node 22.18+, ffmpeg with libopus, and .NET 10 SDK for the two Windows projects. Windows 10
+version 2004 (build 19041) or newer is required for per-process capture.
 
 ### Linux
 
@@ -105,6 +105,7 @@ On every platform:
 
 ```text
 npm run typecheck
+npm run lint:web
 npm run smoke
 ```
 
@@ -114,9 +115,9 @@ On Windows, also run:
 dotnet build DiscordAudioBridge.sln -c Release -warnaserror
 ```
 
-CI runs the TypeScript checks on Node 22.18 and 26, builds both C# projects with warnings as errors,
-and packages Windows x64 plus Linux x64/arm64. Please do not suppress a warning without explaining
-why in a comment.
+CI runs TypeScript, semantic HTML/JS, npm security, authenticated HTTP/WebSocket, and audio-pacer
+checks on Node 22.18 and 26. It builds both .NET 10 C# projects with warnings as errors and packages
+Windows x64 plus Linux x64/arm64. Please do not suppress a warning without explaining why in a comment.
 
 ## Style
 
@@ -139,9 +140,11 @@ Match what is already there. A few things that are deliberate:
 - **`src/audio/pacer.ts`.** This is the Linux counterpart: preserve complete channel frames,
   priming, real-time pacing, silence fill, and backpressure recovery.
 - **`src/control/`.** It listens on a socket and can rewrite `.env`. Keep it bound to 127.0.0.1,
-  keep the token check on every route, and never return the bot token to a client.
+  keep Bearer/WebSocket-subprotocol authentication plus origin/Host checks on every protected route,
+  and never return the bot token to a client.
 - **`src/remote/` and `remote/`.** This surface intentionally binds to the network. Keep its API
-  restricted to runtime streaming controls and treat source enumeration as host information.
+  restricted to runtime streaming controls, verify tokenless tailnet peers through the Tailscale
+  daemon, and treat source enumeration as host information.
 
 ## Reporting bugs
 

@@ -34,11 +34,13 @@ export async function findRunningControlPanel(
     }
 
     const panelUrl = new URL(`http://127.0.0.1:${saved.port}/`);
-    panelUrl.searchParams.set('token', saved.token);
+    panelUrl.hash = `token=${saved.token}`;
     const stateUrl = new URL('/api/state', panelUrl);
-    stateUrl.search = panelUrl.search;
 
-    const response = await request(stateUrl, { signal: AbortSignal.timeout(1_000) });
+    const response = await request(stateUrl, {
+      headers: { authorization: `Bearer ${saved.token}` },
+      signal: AbortSignal.timeout(1_000),
+    });
     if (!response.ok) return undefined;
     const snapshot = (await response.json()) as { bot?: unknown };
     return snapshot && typeof snapshot === 'object' && 'bot' in snapshot

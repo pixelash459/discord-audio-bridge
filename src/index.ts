@@ -200,31 +200,43 @@ async function main(openPanel = false): Promise<void> {
 /* ── shutdown ─────────────────────────────────────────────────────────────── */
 
 let shuttingDown = false;
-async function shutdown(signal: string): Promise<void> {
+async function shutdown(signal: string, exitCode = 0): Promise<void> {
   if (shuttingDown) return;
   shuttingDown = true;
 
   log.info(`${signal} - shutting down`);
-  await remote?.stop().catch(() => undefined);
-  await control?.stop().catch(() => undefined);
-  await endAllSessions();
-  await Promise.allSettled([closeAllEncoders(), closeAllTaps()]);
-  await client.destroy();
-  process.exit(0);
+  const watchdog = setTimeout(() => {
+    log.error('graceful shutdown timed out; forcing exit');
+    process.exit(exitCode || 1);
+  }, 10_000);
+  watchdog.unref();
+  try {
+    await remote?.stop().catch((error) => log.debug('remote shutdown failed', error));
+    await control?.stop().catch((error) => log.debug('control shutdown failed', error));
+    await endAllSessions();
+    await Promise.allSettled([closeAllEncoders(), closeAllTaps()]);
+    await client.destroy();
+  } finally {
+    clearTimeout(watchdog);
+    process.exit(exitCode);
+  }
 }
 
 for (const signal of ['SIGINT', 'SIGTERM', 'SIGHUP'] as const) {
   process.on(signal, () => void shutdown(signal));
 }
 
-process.on('unhandledRejection', (error) => log.error('unhandled rejection', error));
+process.on('unhandledRejection', (error) => {
+  log.error('unhandled rejection - shutting down', error);
+  void shutdown('unhandled rejection', 1);
+});
 
 // Node's default for an uncaught exception is to crash. Logging without exiting would leave the
 // process alive in an undefined state - and exiting 0 would make a fatal failure look to whatever
 // launched us like a clean shutdown.
 process.on('uncaughtException', (error) => {
   log.error('uncaught exception - shutting down', error);
-  process.exit(1);
+  void shutdown('uncaught exception', 1);
 });
 
 /* ── entry-point dispatch ──────────────────────────────────────────────────── */

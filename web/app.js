@@ -12,11 +12,13 @@ const $ = (id) => document.getElementById(id);
 // in history or get copied out of a screenshot.
 const token = (() => {
   const url = new URL(location.href);
-  const fromUrl = url.searchParams.get('token');
+  const fragment = new URLSearchParams(url.hash.slice(1));
+  const fromUrl = fragment.get('token') ?? url.searchParams.get('token');
   if (fromUrl) {
     sessionStorage.setItem('bridge-token', fromUrl);
     url.searchParams.delete('token');
-    history.replaceState(null, '', url.pathname + url.hash);
+    url.hash = '';
+    history.replaceState(null, '', url.pathname + url.search);
     return fromUrl;
   }
   return sessionStorage.getItem('bridge-token') ?? '';
@@ -94,7 +96,10 @@ const formatDb = (db) => (!Number.isFinite(db) || db <= -99 ? '−∞' : `${db.t
 
 function showTab(name) {
   for (const tab of document.querySelectorAll('.tab')) {
-    tab.classList.toggle('active', tab.dataset.tab === name);
+    const active = tab.dataset.tab === name;
+    tab.classList.toggle('active', active);
+    tab.setAttribute('aria-selected', String(active));
+    tab.tabIndex = active ? 0 : -1;
   }
   for (const panel of document.querySelectorAll('.panel')) {
     panel.classList.toggle('active', panel.dataset.panel === name);
@@ -105,6 +110,20 @@ function showTab(name) {
 document.querySelector('.tabs').addEventListener('click', (event) => {
   const tab = event.target.closest('.tab');
   if (tab) showTab(tab.dataset.tab);
+});
+
+document.querySelector('.tabs').addEventListener('keydown', (event) => {
+  if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
+  const tabs = [...document.querySelectorAll('.tab')];
+  const current = tabs.indexOf(document.activeElement);
+  const next = event.key === 'Home'
+    ? 0
+    : event.key === 'End'
+      ? tabs.length - 1
+      : (current + (event.key === 'ArrowRight' ? 1 : -1) + tabs.length) % tabs.length;
+  event.preventDefault();
+  tabs[next].focus();
+  showTab(tabs[next].dataset.tab);
 });
 
 document.addEventListener('click', (event) => {
@@ -130,16 +149,23 @@ document.querySelector('.seg').addEventListener('click', (event) => {
   ui.selected = null;
   for (const b of document.querySelectorAll('.seg-btn')) {
     b.classList.toggle('active', b === button);
+    b.setAttribute('aria-pressed', String(b === button));
   }
   renderSources();
 });
 
 async function loadSources() {
+  const refresh = $('refresh-btn');
+  refresh.disabled = true;
+  refresh.textContent = 'Refreshing…';
   try {
     ui.sources = await api('sources');
     renderSources();
   } catch (error) {
     fail(error);
+  } finally {
+    refresh.disabled = false;
+    refresh.textContent = 'Refresh sources';
   }
 }
 
@@ -179,6 +205,8 @@ function renderSources() {
             source: { kind: 'dshow', name: d.name, label: d.name },
           }));
 
+  if (ui.selected && !items.some((item) => item.key === ui.selected.key)) ui.selected = null;
+
   if (items.length === 0) {
     const empty = document.createElement('div');
     empty.className = 'empty';
@@ -187,13 +215,16 @@ function renderSources() {
         ? 'No app is playing audio right now. Start playback and hit Refresh.'
         : 'Nothing found.';
     list.append(empty);
+    updateStartButton();
     return;
   }
 
   for (const item of items) {
     const button = document.createElement('button');
+    button.type = 'button';
     button.className = 'source';
     button.classList.toggle('selected', ui.selected?.key === item.key);
+    button.setAttribute('aria-pressed', String(ui.selected?.key === item.key));
 
     if (item.active) {
       const dot = document.createElement('span');
@@ -216,11 +247,18 @@ function renderSources() {
     button.addEventListener('click', () => {
       ui.selected = item;
       renderSources();
-      void startStream();
     });
 
     list.append(button);
   }
+  updateStartButton();
+}
+
+function updateStartButton() {
+  const button = $('start-btn');
+  const ready = Boolean(ui.selected && ui.guildId && ui.channelId);
+  button.disabled = !ready;
+  button.textContent = !ui.selected ? 'Choose a source' : session() ? 'Apply route' : 'Start stream';
 }
 
 /* ── destination ──────────────────────────────────────────────────────────── */
@@ -249,8 +287,15 @@ function renderGuilds() {
   if (ui.guilds.length === 0) {
     guildSelect.append(new Option('The bot is not in any server yet', ''));
     $('channel-select').replaceChildren(new Option('—', ''));
+    guildSelect.disabled = true;
+    $('channel-select').disabled = true;
+    ui.guildId = null;
+    ui.channelId = null;
+    updateStartButton();
     return;
   }
+
+  guildSelect.disabled = false;
 
   for (const guild of ui.guilds) {
     guildSelect.append(new Option(guild.name, guild.id));
@@ -271,12 +316,13 @@ function renderChannels() {
   if (channels.length === 0) {
     select.append(new Option('No voice channels the bot can join', ''));
     ui.channelId = null;
+    select.disabled = true;
   } else {
     for (const channel of channels) {
       const label =
         `${channel.name} · ${Math.round(channel.bitrate / 1000)} kbps` +
         (channel.members > 0 ? ` · ${channel.members} listening` : '') +
-        (channel.joinable ? '' : ' (no permission)');
+        (channel.joinable ? '' : ` (${channel.unavailableReason ?? 'unavailable'})`);
       const option = new Option(label, channel.id);
       option.disabled = !channel.joinable;
       select.append(option);
@@ -285,9 +331,11 @@ function renderChannels() {
     const stillThere = channels.find((c) => c.id === previous && c.joinable);
     ui.channelId = (stillThere ?? channels.find((c) => c.joinable))?.id ?? null;
     if (ui.channelId) select.value = ui.channelId;
+    select.disabled = !ui.channelId;
   }
 
   renderChannelHint();
+  updateStartButton();
 }
 
 function renderChannelHint() {
@@ -321,6 +369,7 @@ $('guild-select').addEventListener('change', (event) => {
 $('channel-select').addEventListener('change', (event) => {
   ui.channelId = event.target.value;
   renderChannelHint();
+  updateStartButton();
 });
 
 $('maximize-btn').addEventListener('click', async () => {
@@ -358,9 +407,13 @@ async function startStream() {
   }
 }
 
+$('start-btn').addEventListener('click', () => void startStream());
+
 $('stop-btn').addEventListener('click', async () => {
+  const live = session();
+  if (!live) return;
   try {
-    await post('stop', { guildId: ui.state?.sessions[0]?.guildId ?? ui.guildId });
+    await post('stop', { guildId: live.guildId });
     ui.selected = null;
     renderSources();
     toast('Stopped.');
@@ -408,7 +461,10 @@ for (const [id, handler] of [
   input.addEventListener('change', commit);
 }
 
-const session = () => ui.state?.sessions[0] ?? null;
+const session = () => {
+  const sessions = ui.state?.sessions ?? [];
+  return ui.guildId ? sessions.find((item) => item.guildId === ui.guildId) ?? null : sessions[0] ?? null;
+};
 
 /* ── render ───────────────────────────────────────────────────────────────── */
 
@@ -435,6 +491,7 @@ function render(state) {
   renderOnboarding(state.bot);
 
   const live = session();
+  updateStartButton();
   $('live-card').hidden = !live;
   if (!live) return;
 
@@ -570,10 +627,15 @@ async function loadRemoteInfo() {
     const origin = new URL(url).origin;
     const button = document.createElement('button');
     button.className = 'btn ghost';
+    button.type = 'button';
     button.textContent = `Copy ${origin}`;
     button.addEventListener('click', async () => {
-      await navigator.clipboard.writeText(url);
-      toast(`Copied remote URL for ${origin}.`, 'ok');
+      try {
+        await navigator.clipboard.writeText(url);
+        toast(`Copied remote URL for ${origin}.`, 'ok');
+      } catch (error) {
+        fail(error);
+      }
     });
     container.append(button);
   }
@@ -703,7 +765,8 @@ let socket;
 let retryDelay = 500;
 
 function connect() {
-  socket = new WebSocket(`ws://${location.host}/ws?token=${encodeURIComponent(token)}`);
+  const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
+  socket = new WebSocket(`${protocol}//${location.host}/ws`, ['bridge-v1', `auth.${token}`]);
 
   socket.addEventListener('open', () => {
     retryDelay = 500;

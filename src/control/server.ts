@@ -6,6 +6,15 @@ import { WebSocketServer, type WebSocket } from 'ws';
 import type { Client } from 'discord.js';
 
 import { projectRoot } from '../config.ts';
+import {
+  bearerToken,
+  hardenServer,
+  hasExpectedHost,
+  hasTrustedOrigin,
+  methodAllowed,
+  RateLimiter,
+  securityHeaders,
+} from '../httpSecurity.ts';
 import { controlTokenPath, removeSavedControlPanel } from './launcher.ts';
 import { logger, onLog, recentLogs } from '../logger.ts';
 import { handleApi, buildSnapshot, ApiError } from './api.ts';
@@ -40,8 +49,14 @@ export class ControlServer {
   readonly port: number;
 
   #http = createServer();
-  #wss = new WebSocketServer({ noServer: true });
+  #wss = new WebSocketServer({
+    noServer: true,
+    maxPayload: 64 * 1024,
+    perMessageDeflate: false,
+    handleProtocols: (protocols) => (protocols.has('bridge-v1') ? 'bridge-v1' : false),
+  });
   #clients = new Set<WebSocket>();
+  #requests = new RateLimiter();
   #client: Client;
   #onQuit: (() => void) | undefined;
   #timer: NodeJS.Timeout | undefined;
@@ -52,17 +67,24 @@ export class ControlServer {
     this.#onQuit = onQuit;
     this.port = port;
     this.token = randomBytes(24).toString('base64url');
+    hardenServer(this.#http);
   }
 
   get url(): string {
-    return `http://127.0.0.1:${this.port}/?token=${this.token}`;
+    return `http://127.0.0.1:${this.port}/#token=${this.token}`;
   }
 
   async start(): Promise<void> {
     if (!existsSync(join(webRoot, 'index.html'))) {
       log.error('control panel assets are missing', { projectRoot, webRoot });
     }
-    this.#http.on('request', (req, res) => void this.#route(req, res));
+    this.#http.on('request', (req, res) => {
+      void this.#route(req, res).catch((error) => {
+        log.error('unhandled control request failure', error);
+        if (!res.headersSent) json(res, 500, { error: 'Internal control server error.' });
+        else res.destroy();
+      });
+    });
 
     this.#http.on('upgrade', (req, socket, head) => {
       const { pathname } = new URL(req.url ?? '/', 'http://127.0.0.1');
@@ -73,9 +95,15 @@ export class ControlServer {
         return;
       }
 
-      if (!this.#authorized(req)) {
+      if (!hasExpectedHost(req) || !hasTrustedOrigin(req) || !this.#authorizedWebSocket(req)) {
         log.warn('rejected unauthorized websocket connection');
-        socket.write('HTTP/1.1 401 Unauthorized\r\n\r\n');
+        socket.write('HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n');
+        socket.destroy();
+        return;
+      }
+
+      if (this.#clients.size >= 8) {
+        socket.write('HTTP/1.1 503 Service Unavailable\r\nConnection: close\r\n\r\n');
         socket.destroy();
         return;
       }
@@ -92,7 +120,7 @@ export class ControlServer {
       });
     });
 
-    mkdirSync(dirname(controlTokenPath), { recursive: true });
+    mkdirSync(dirname(controlTokenPath), { recursive: true, mode: 0o700 });
     writeFileSync(
       controlTokenPath,
       JSON.stringify({ port: this.port, token: this.token }),
@@ -120,15 +148,17 @@ export class ControlServer {
   }
 
   #authorized(req: IncomingMessage): boolean {
-    const url = new URL(req.url ?? '/', 'http://127.0.0.1');
-    const supplied =
-      url.searchParams.get('token') ??
-      req.headers.authorization?.replace(/^Bearer\s+/i, '') ??
-      '';
-
-    const a = Buffer.from(supplied);
+    const a = Buffer.from(bearerToken(req));
     const b = Buffer.from(this.token);
     return a.length === b.length && timingSafeEqual(a, b);
+  }
+
+  #authorizedWebSocket(req: IncomingMessage): boolean {
+    const protocols = (req.headers['sec-websocket-protocol'] ?? '').split(',').map((value) => value.trim());
+    const supplied = protocols.find((value) => value.startsWith('auth.'))?.slice(5) ?? '';
+    const actual = Buffer.from(this.token);
+    const candidate = Buffer.from(supplied);
+    return protocols.includes('bridge-v1') && candidate.length === actual.length && timingSafeEqual(candidate, actual);
   }
 
   #attach(ws: WebSocket): void {
@@ -153,7 +183,12 @@ export class ControlServer {
     if (this.#clients.size === 0) return;
     const text = JSON.stringify(payload);
     for (const ws of this.#clients) {
-      if (ws.readyState === ws.OPEN) ws.send(text);
+      if (ws.bufferedAmount > 1024 * 1024) {
+        log.warn('closing stalled control panel websocket');
+        ws.terminate();
+      } else if (ws.readyState === ws.OPEN) {
+        ws.send(text);
+      }
     }
   }
 
@@ -175,6 +210,12 @@ export class ControlServer {
     });
 
     if (url.pathname.startsWith('/api/')) {
+      if (!hasExpectedHost(req) || !hasTrustedOrigin(req)) {
+        return json(res, 403, { error: 'Cross-origin request rejected.' });
+      }
+      if (!this.#requests.allow(req.socket.remoteAddress ?? 'loopback', 300)) {
+        return json(res, 429, { error: 'Too many control requests. Wait a moment and try again.' });
+      }
       if (!this.#authorized(req)) {
         log.warn(`rejected unauthorized API request: ${req.method ?? 'GET'} ${url.pathname}`);
         return json(res, 401, { error: 'Bad or missing control token.' });
@@ -200,38 +241,45 @@ export class ControlServer {
   }
 
   #serveStatic(pathname: string, res: ServerResponse): void {
+    const req = res.req;
+    if (!methodAllowed(req, res, ['GET', 'HEAD'])) return;
     const relative = pathname === '/' ? 'index.html' : pathname.replace(/^\/+/, '');
 
     // Resolve, then confirm the result is still inside web/ - the only defence that actually
     // holds against traversal, since normalize() alone will happily walk out of the root.
     const target = resolve(webRoot, normalize(relative));
     if (target !== webRoot && !target.startsWith(webRoot + sep)) {
-      res.writeHead(403).end('Forbidden');
+      res.writeHead(403, securityHeaders('text/plain; charset=utf-8')).end('Forbidden');
       return;
     }
 
     if (!existsSync(target)) {
       log.warn('control panel asset not found', { pathname, target, webRoot });
       res
-        .writeHead(404, { 'content-type': 'text/plain; charset=utf-8' })
+        .writeHead(404, securityHeaders('text/plain; charset=utf-8'))
         .end(`Control panel asset not found: ${pathname}\nAsset root: ${webRoot}\n`);
       return;
     }
 
-    res.writeHead(200, {
-      'content-type': MIME[extname(target).toLowerCase()] ?? 'application/octet-stream',
-      'cache-control': 'no-store',
+    res.writeHead(200, securityHeaders(MIME[extname(target).toLowerCase()] ?? 'application/octet-stream'));
+    if (req.method === 'HEAD') {
+      res.end();
+      return;
+    }
+    const stream = createReadStream(target);
+    stream.once('error', (error) => {
+      log.warn('control panel asset read failed', error);
+      res.destroy(error);
     });
-    createReadStream(target).pipe(res);
+    stream.pipe(res);
   }
 }
 
 function json(res: ServerResponse, status: number, body: unknown): void {
   const text = JSON.stringify(body);
   res.writeHead(status, {
-    'content-type': 'application/json; charset=utf-8',
+    ...securityHeaders('application/json; charset=utf-8'),
     'content-length': Buffer.byteLength(text),
-    'cache-control': 'no-store',
   });
   res.end(text);
 }

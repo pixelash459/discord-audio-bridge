@@ -20,6 +20,12 @@ import { readConfig, writeConfig, RESTART_REQUIRED_KEYS, type EditableKey } from
 import { authStatus, signIn } from '../signin.ts';
 import { remoteAccessInfo } from '../remote/server.ts';
 import { registerCommands } from '../registration.ts';
+import {
+  finiteNumber,
+  OPUS_MAX_BITRATE,
+  OPUS_MIN_BITRATE,
+  validateSource,
+} from '../validation.ts';
 
 const log = logger('api');
 
@@ -31,9 +37,6 @@ export class ApiError extends Error {
     this.name = 'ApiError';
   }
 }
-
-const OPUS_MIN_BITRATE = 8_000;
-const OPUS_MAX_BITRATE = 510_000;
 
 export interface GuildView {
   id: string;
@@ -48,6 +51,7 @@ export interface GuildView {
     userLimit: number;
     members: number;
     joinable: boolean;
+    unavailableReason: string | null;
   }[];
 }
 
@@ -120,17 +124,25 @@ async function body<T>(req: IncomingMessage): Promise<T> {
 
   for await (const chunk of req) {
     size += (chunk as Buffer).length;
-    if (size > 256 * 1024) throw new ApiError(413, 'Request body too large.');
+    if (size > 64 * 1024) throw new ApiError(413, 'Request body too large.');
     chunks.push(chunk as Buffer);
   }
 
   if (chunks.length === 0) return {} as T;
+  if (!req.headers['content-type']?.toLowerCase().startsWith('application/json')) {
+    throw new ApiError(415, 'Request body must use application/json.');
+  }
 
+  let parsed: unknown;
   try {
-    return JSON.parse(Buffer.concat(chunks).toString('utf8')) as T;
+    parsed = JSON.parse(Buffer.concat(chunks).toString('utf8')) as unknown;
   } catch {
     throw new ApiError(400, 'Body was not valid JSON.');
   }
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    throw new ApiError(400, 'JSON body must be an object.');
+  }
+  return parsed as T;
 }
 
 function requireChannel(client: Client, guildId: string, channelId: string): VoiceBasedChannel {
@@ -147,6 +159,9 @@ function requireChannel(client: Client, guildId: string, channelId: string): Voi
   const missing = [
     permissions.has(PermissionFlagsBits.Connect) ? null : 'Connect',
     permissions.has(PermissionFlagsBits.Speak) ? null : 'Speak',
+    channel.type === ChannelType.GuildStageVoice && !permissions.has(PermissionFlagsBits.MuteMembers)
+      ? 'Mute Members (needed to become a Stage speaker)'
+      : null,
   ].filter(Boolean);
 
   if (missing.length > 0) {
@@ -182,15 +197,21 @@ function guilds(client: Client): GuildView[] {
         .map((channel) => {
           const voice = channel as VoiceBasedChannel;
           const permissions = me?.permissionsIn(voice);
+          const missing = [
+            permissions?.has(PermissionFlagsBits.Connect) ? null : 'Connect',
+            permissions?.has(PermissionFlagsBits.Speak) ? null : 'Speak',
+            channel.type === ChannelType.GuildStageVoice && !permissions?.has(PermissionFlagsBits.MuteMembers)
+              ? 'Mute Members (needed to become a Stage speaker)'
+              : null,
+          ].filter(Boolean);
           return {
             id: voice.id,
             name: voice.name,
             bitrate: voice.bitrate,
             userLimit: 'userLimit' in voice ? voice.userLimit : 0,
             members: voice.members.size,
-            joinable: Boolean(
-              permissions?.has(PermissionFlagsBits.Connect) && permissions.has(PermissionFlagsBits.Speak),
-            ),
+            joinable: missing.length === 0,
+            unavailableReason: missing.length > 0 ? `Missing ${missing.join(', ')}` : null,
           };
         })
         .sort((a, b) => a.name.localeCompare(b.name)),
@@ -279,11 +300,16 @@ export async function handleApi(client: Client, req: IncomingMessage, url: URL):
       }>(req);
 
       if (!input.guildId || !input.channelId) throw new ApiError(400, 'guildId and channelId are required.');
-      if (!input.source?.kind) throw new ApiError(400, 'A source is required.');
-      if (input.source.kind === 'dshow' && !IS_WINDOWS) {
+      let source: SourceSpec;
+      try {
+        source = validateSource(input.source);
+      } catch (error) {
+        throw new ApiError(400, error instanceof Error ? error.message : String(error));
+      }
+      if (source.kind === 'dshow' && !IS_WINDOWS) {
         throw new ApiError(400, 'DirectShow sources are Windows-only. Capture an app or a device instead.');
       }
-      if (input.source.kind !== 'dshow' && !isAudioTapBuilt()) {
+      if (source.kind !== 'dshow' && !isAudioTapBuilt()) {
         throw new ApiError(
           409,
           IS_WINDOWS
@@ -292,13 +318,21 @@ export async function handleApi(client: Client, req: IncomingMessage, url: URL):
         );
       }
 
+      if (input.bitrate !== undefined) {
+        try {
+          finiteNumber(input.bitrate, 'Bitrate', OPUS_MIN_BITRATE, OPUS_MAX_BITRATE);
+        } catch (error) {
+          throw new ApiError(400, error instanceof Error ? error.message : String(error));
+        }
+      }
+
       const channel = requireChannel(client, input.guildId, input.channelId);
       const bitrate = resolveBitrate(channel, input.bitrate);
-      const session = await startOrRetarget(channel, input.source, bitrate);
+      const session = await startOrRetarget(channel, source, bitrate);
       log.info('stream request completed', {
         guild: input.guildId,
         channel: input.channelId,
-        sourceKind: input.source.kind,
+        sourceKind: source.kind,
         bitrate,
       });
       return { session: session.status() };
@@ -316,8 +350,10 @@ export async function handleApi(client: Client, req: IncomingMessage, url: URL):
       const { guildId, db } = await body<{ guildId: string; db: number }>(req);
       const session = getSession(guildId);
       if (!session) throw new ApiError(404, 'Nothing is streaming in that server.');
-      if (typeof db !== 'number' || db < -60 || db > 20) {
-        throw new ApiError(400, 'Gain must be between -60 and +20 dB.');
+      try {
+        finiteNumber(db, 'Gain', -60, 20);
+      } catch (error) {
+        throw new ApiError(400, error instanceof Error ? error.message : String(error));
       }
       await session.setGain(db);
       log.info('gain changed', { guild: guildId, db });
@@ -338,8 +374,10 @@ export async function handleApi(client: Client, req: IncomingMessage, url: URL):
       const { guildId, bitrate } = await body<{ guildId: string; bitrate: number }>(req);
       const session = getSession(guildId);
       if (!session) throw new ApiError(404, 'Nothing is streaming in that server.');
-      if (typeof bitrate !== 'number' || bitrate < OPUS_MIN_BITRATE || bitrate > OPUS_MAX_BITRATE) {
-        throw new ApiError(400, `Bitrate must be between ${OPUS_MIN_BITRATE} and ${OPUS_MAX_BITRATE}.`);
+      try {
+        finiteNumber(bitrate, 'Bitrate', OPUS_MIN_BITRATE, OPUS_MAX_BITRATE);
+      } catch (error) {
+        throw new ApiError(400, error instanceof Error ? error.message : String(error));
       }
       await session.setBitrate(Math.round(bitrate));
       log.info('stream bitrate changed', { guild: guildId, bitrate: Math.round(bitrate) });
@@ -355,7 +393,10 @@ export async function handleApi(client: Client, req: IncomingMessage, url: URL):
 
       const channel = requireChannel(client, guildId, channelId);
       const max = channel.guild.maximumBitrate;
-      const target = Math.min(bitrate || max, max);
+      if (typeof bitrate !== 'number' || !Number.isFinite(bitrate) || (bitrate !== 0 && bitrate < 8_000)) {
+        throw new ApiError(400, 'Channel bitrate must be 0 (maximum) or at least 8000.');
+      }
+      const target = Math.min(Math.round(bitrate || max), max);
 
       if (!channel.guild.members.me?.permissionsIn(channel).has(PermissionFlagsBits.ManageChannels)) {
         throw new ApiError(403, `The bot needs Manage Channels on #${channel.name} to change its bitrate.`);
@@ -383,7 +424,11 @@ export async function handleApi(client: Client, req: IncomingMessage, url: URL):
 
     case 'POST /api/config': {
       const updates = await body<Partial<Record<EditableKey, string>>>(req);
-      writeConfig(updates);
+      try {
+        writeConfig(updates);
+      } catch (error) {
+        throw new ApiError(400, error instanceof Error ? error.message : String(error));
+      }
       log.info(`configuration updated: ${Object.keys(updates).join(', ')}`);
       return {
         ...readConfig(),

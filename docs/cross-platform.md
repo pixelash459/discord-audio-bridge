@@ -33,7 +33,7 @@ sink itself when no monitor node exists) before spawning anything.
 
 ## Voice stack: why the core did not get rewritten
 
-Discord requires DAVE end-to-end encryption for non-Stage voice calls and disconnects unsupported
+Discord requires DAVE end-to-end encryption for voice calls and disconnects unsupported
 clients with close code 4017. `@discordjs/voice` 0.19.2+ implements DAVE through
 `@snazzah/davey`, so the working TypeScript voice stack remains in place and distribution is solved
 at the packaging layer instead of by rewriting the voice implementation.
@@ -85,7 +85,8 @@ Runtime details that make packaged installs behave:
 
 ## CI
 
-`check` (typecheck + smoke on Node 22.18 and 26), `native` (Windows AudioTap/desktop builds), and
+`check` (typecheck, semantic web validation, dependency audit, source/pacer smoke, and authenticated
+HTTP/WebSocket integration on Node 22.18 and 26), `native` (.NET 10 Windows AudioTap/desktop builds), and
 `package` (Windows x64, Linux x64, and Linux arm64) run for pull requests, pushes to `main`, version
 tags, and manual dispatches. Linux arm64 uses GitHub's `ubuntu-24.04-arm` hosted runner. A `v*` tag
 also collects every package artifact into a GitHub Release.
@@ -143,6 +144,9 @@ device sources render, a stream joins the chosen voice channel, meters move, gai
 changes take effect, and **Mute bot** changes the bot's Discord voice state. From another LAN or
 Tailscale device, open one of the printed remote URLs and verify source/destination selection,
 retargeting, mute, gain, bitrate, and stop.
+
+With `REMOTE_TRUST_TAILSCALE=true`, also confirm `tailscale whois --json <client-ip>` succeeds on the
+host. A tailnet-addressed peer is not trusted solely because it falls inside Tailscale's IP ranges.
 
 Pause and resume the source to exercise silence fill. Stop the stream and exit the bot, then check
 that no helper was orphaned:

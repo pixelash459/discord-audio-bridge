@@ -2,10 +2,12 @@ const $ = (id) => document.getElementById(id);
 
 const token = (() => {
   const url = new URL(location.href);
-  const supplied = url.searchParams.get('token');
+  const supplied = new URLSearchParams(url.hash.slice(1)).get('token') ?? url.searchParams.get('token');
   if (supplied) {
     sessionStorage.setItem('bridge-remote-token', supplied);
-    history.replaceState(null, '', url.pathname);
+    url.searchParams.delete('token');
+    url.hash = '';
+    history.replaceState(null, '', url.pathname + url.search);
     return supplied;
   }
   return sessionStorage.getItem('bridge-remote-token') ?? '';
@@ -91,7 +93,7 @@ function renderChannels(preferred) {
     select.disabled = true;
   } else {
     for (const channel of channels) {
-      const label = `${channel.name} · ${Math.round(channel.bitrate / 1000)} kbps${channel.members ? ` · ${channel.members} connected` : ''}${channel.joinable ? '' : ' · unavailable'}`;
+      const label = `${channel.name} · ${Math.round(channel.bitrate / 1000)} kbps${channel.members ? ` · ${channel.members} connected` : ''}${channel.joinable ? '' : ` · ${channel.unavailableReason ?? 'unavailable'}`}`;
       const option = new Option(label, channel.id);
       option.disabled = !channel.joinable;
       select.append(option);
@@ -199,6 +201,8 @@ function render() {
     const card = document.createElement('article');
     card.className = 'card';
     card.dataset.guild = session.guildId;
+    const gainId = `gain-${session.guildId}`;
+    const bitrateId = `bitrate-${session.guildId}`;
     card.innerHTML = `
       <div class="card-head">
         <div><h2></h2><p class="subtitle"></p></div>
@@ -210,10 +214,10 @@ function render() {
         <div class="stat"><span>Capture</span><strong class="capture"></strong></div>
       </div>
       <div class="controls">
-        <div class="control"><label>Gain <output class="gain-value"></output></label><input class="gain" type="range" min="-30" max="12" step="0.5" /></div>
-        <div class="control"><label>Opus bitrate <output class="bitrate-value"></output></label><input class="bitrate" type="range" min="32" step="8" /></div>
+        <div class="control"><label for="${gainId}">Gain <span class="gain-value"></span></label><input id="${gainId}" class="gain" type="range" min="-60" max="20" step="0.5" /></div>
+        <div class="control"><label for="${bitrateId}">Opus bitrate <span class="bitrate-value"></span></label><input id="${bitrateId}" class="bitrate" type="range" min="32" step="8" /></div>
       </div>
-      <div class="actions"><button class="mute secondary"></button><button class="stop danger">Stop</button></div>`;
+      <div class="actions"><button class="mute secondary" type="button"></button><button class="stop danger" type="button">Stop</button></div>`;
 
     card.querySelector('h2').textContent = session.source.label;
     card.querySelector('.subtitle').textContent = `to ${session.channelName}`;

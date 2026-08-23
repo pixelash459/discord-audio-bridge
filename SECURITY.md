@@ -14,13 +14,16 @@ Worth knowing before you audit or deploy it:
 
 **The bot token comes from the environment configuration.** In a development checkout it normally
 lives in `.env`; a read-only package writes the editable file under the per-user runtime state
-directory. It is never returned by the control API — reads report only whether a token is set.
-Environment files and runtime tokens are gitignored.
+directory. It is never returned by the control API—reads report only whether a token is set.
+Configuration inputs are type/range checked and safely quoted before writing. Environment files and
+runtime tokens are gitignored and tightened to user-only filesystem permissions where supported.
 
 **The control panel listens on a socket.** It binds to `127.0.0.1` only, never `0.0.0.0`, so it is
 not reachable from the network. Loopback is not authentication on its own, so every `/api` request
 and WebSocket upgrade also requires a token minted at startup and written to `.control-token`
-(also gitignored). Static assets are served without a token because they contain nothing secret.
+(also gitignored). It is delivered in a URL fragment, stripped from the address bar, and then sent
+in an Authorization header or WebSocket subprotocol rather than in request URLs. Static assets are
+served without a token because they contain nothing secret.
 
 Set `CONTROL_PORT=0` to disable the local panel entirely and use slash commands and/or the
 restricted remote dashboard.
@@ -33,12 +36,22 @@ credentials, native builds, diagnostics, channel-bitrate changes, or command reg
 names and Discord destinations are host/account information, so do not expose the dashboard to an
 untrusted network.
 
-With `REMOTE_TRUST_TAILSCALE=true`, requests whose local and peer addresses are both inside
-Tailscale's assigned ranges rely on Tailscale device authentication and need no second app token.
-Use that only for a personal or otherwise controlled tailnet. LAN requests still require the token.
-Anyone holding a tokenized LAN URL can control streaming, including starting a new stream, so treat
-that URL and `.remote-token` as credentials. Set `REMOTE_PORT=0` to disable the listener, bind
-`REMOTE_HOST` to one interface, or set `REMOTE_TRUST_TAILSCALE=false` to require a token everywhere.
+With `REMOTE_TRUST_TAILSCALE=true`, requests on Tailscale addresses are allowed without a second app
+token only after the local daemon successfully resolves the peer with `tailscale whois --json` and
+confirms the returned node address. This fails closed to token authentication when the CLI or daemon
+is unavailable. Use it only for a personal or otherwise controlled tailnet. LAN requests still
+require the token. Anyone holding a tokenized LAN URL can control streaming, including starting a
+new stream, so treat that URL and `.remote-token` as credentials. The fragment is not sent in HTTP
+requests, but ordinary LAN HTTP is still unencrypted against passive observers; prefer Tailscale.
+Set `REMOTE_PORT=0` to disable the listener, bind `REMOTE_HOST` to one interface, or set
+`REMOTE_TRUST_TAILSCALE=false` to require a token everywhere.
+
+**Both HTTP surfaces are hardened against browser and resource attacks.** API requests require a
+same-origin browser context and an expected Host value (including DNS-rebinding defense), request
+bodies are JSON-only and capped at 64 KiB, rate-limit bookkeeping is bounded, WebSocket client count
+and payload/backpressure are capped, and server request/header/idle timeouts are finite. Responses
+set a restrictive CSP, deny framing and sensitive browser capabilities, disable caching, and do not
+return internal errors for unexpected request failures.
 
 **The local control API can rewrite configuration and perform setup actions.** This is intentional:
 the Setup tab can update the runtime `.env`, build AudioTap on Windows, register slash commands with

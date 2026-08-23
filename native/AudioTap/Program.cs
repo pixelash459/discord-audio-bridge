@@ -1,4 +1,5 @@
 using System.Buffers;
+using System.Globalization;
 using System.Text.Json;
 using NAudio.CoreAudioApi;
 using NAudio.Wave;
@@ -193,9 +194,12 @@ internal static class Program
 
                 switch (parts[0].ToLowerInvariant())
                 {
-                    case "gain" when parts.Length == 2 && double.TryParse(parts[1], out var db):
-                        gain = (float)Math.Pow(10, Math.Clamp(db, -60, 20) / 20.0);
-                        Emit("gain", new { gainDb = db });
+                    case "gain" when parts.Length == 2 &&
+                        double.TryParse(parts[1], NumberStyles.Float, CultureInfo.InvariantCulture, out var db) &&
+                        double.IsFinite(db):
+                        var clampedDb = Math.Clamp(db, -60, 20);
+                        gain = (float)Math.Pow(10, clampedDb / 20.0);
+                        Emit("gain", new { gainDb = clampedDb });
                         break;
                     case "stats":
                         var s = pacer.Snapshot();
@@ -249,12 +253,12 @@ internal static class Program
             // is the scope the platform-compatibility analyzer reasons about.
             return Task.Run(() =>
                 {
-                    // AUDIOCLIENT_PROCESS_LOOPBACK_PARAMS arrived in Windows 10 version 2004.
+                    // Follow the current Windows SDK contract for process-loopback activation.
                     // Checking turns an opaque COM failure into an actionable sentence.
                     if (!OperatingSystem.IsWindowsVersionAtLeast(10, 0, 19041))
                     {
                         throw new PlatformNotSupportedException(
-                            "Per-process capture requires Windows 10 build 19041 (version 2004) or " +
+                            "Per-process capture requires Windows 10 version 2004 (build 19041) or " +
                             "newer. Use --device for endpoint loopback instead.");
                     }
 

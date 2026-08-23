@@ -17,6 +17,10 @@ import {
 
 const log = logger('tap');
 const captureChildren = new Set<ChildProcessWithoutNullStreams>();
+let processCache: { value: ProcessInfo[]; expires: number } | undefined;
+let processListing: Promise<ProcessInfo[]> | undefined;
+let deviceCache: { value: DeviceInfo[]; expires: number } | undefined;
+let deviceListing: Promise<DeviceInfo[]> | undefined;
 
 /**
  * A running capture, whichever side of the OS split produced it: AudioTap.exe on Windows,
@@ -182,13 +186,35 @@ export async function closeAllTaps(): Promise<void> {
 }
 
 export async function listProcesses(): Promise<ProcessInfo[]> {
-  return IS_WINDOWS
-    ? (JSON.parse(await run(['--list-processes'])) as ProcessInfo[])
-    : listPipewireApps();
+  if (processCache && processCache.expires > Date.now()) return processCache.value;
+  if (processListing) return processListing;
+  processListing = (
+    IS_WINDOWS ? run(['--list-processes']).then((value) => JSON.parse(value) as ProcessInfo[]) : listPipewireApps()
+  ).then((value) => {
+    processCache = { value, expires: Date.now() + 2_000 };
+    return value;
+  });
+  try {
+    return await processListing;
+  } finally {
+    processListing = undefined;
+  }
 }
 
 export async function listDevices(): Promise<DeviceInfo[]> {
-  return IS_WINDOWS ? (JSON.parse(await run(['--list-devices'])) as DeviceInfo[]) : listPipewireDevices();
+  if (deviceCache && deviceCache.expires > Date.now()) return deviceCache.value;
+  if (deviceListing) return deviceListing;
+  deviceListing = (
+    IS_WINDOWS ? run(['--list-devices']).then((value) => JSON.parse(value) as DeviceInfo[]) : listPipewireDevices()
+  ).then((value) => {
+    deviceCache = { value, expires: Date.now() + 5_000 };
+    return value;
+  });
+  try {
+    return await deviceListing;
+  } finally {
+    deviceListing = undefined;
+  }
 }
 
 /**
@@ -264,6 +290,8 @@ export class Tap implements CaptureTap {
 
     log.debug('spawning AudioTap', { args });
     const child = spawn(config.paths.audioTap, args, { windowsHide: true });
+    captureChildren.add(child);
+    child.once('close', () => captureChildren.delete(child));
     log.debug('AudioTap process spawned', { pid: child.pid });
 
     // stdout is binary PCM, so every diagnostic comes back on stderr as one JSON object per line.

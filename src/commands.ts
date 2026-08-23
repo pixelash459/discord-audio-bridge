@@ -514,13 +514,24 @@ export async function collectDiagnostics(): Promise<string> {
     // `dotnet` on PATH only proves the runtime is there. Building AudioTap needs the SDK, and
     // the host reports its absence by failing --version with "No .NET SDKs were found".
     const dotnet = spawnSync('dotnet', ['--version'], { encoding: 'utf8', windowsHide: true });
+    const dotnetVersion = dotnet.stdout.trim();
+    const dotnetMajor = Number.parseInt(dotnetVersion.split('.')[0] ?? '', 10);
+    const helperBundled = backend === 'wasapi';
     capture.push(
       `dotnet SDK  ${
         dotnet.error
-          ? 'not installed (needed only to build AudioTap: winget install Microsoft.DotNet.SDK.9)'
-          : dotnet.status === 0 && dotnet.stdout.trim()
-            ? dotnet.stdout.trim()
-            : 'runtime present but NO SDK (winget install Microsoft.DotNet.SDK.9)'
+          ? helperBundled
+            ? 'not installed (optional; the bundled AudioTap is self-contained)'
+            : 'not installed (needed to build AudioTap: winget install Microsoft.DotNet.SDK.10)'
+          : dotnet.status === 0 && dotnetVersion
+            ? dotnetMajor >= 10
+              ? dotnetVersion
+              : helperBundled
+                ? `${dotnetVersion} (optional; SDK 10 is needed only to rebuild AudioTap)`
+                : `${dotnetVersion} - TOO OLD (install Microsoft.DotNet.SDK.10 to build AudioTap)`
+            : helperBundled
+              ? 'runtime only (optional; the bundled AudioTap is self-contained)'
+              : 'runtime present but NO SDK (install Microsoft.DotNet.SDK.10 to build AudioTap)'
       }`,
     );
   } else {

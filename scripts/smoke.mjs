@@ -20,6 +20,9 @@ process.env.LOG_FILE ||= 'off';
 const modules = [
   '../src/config.ts',
   '../src/logger.ts',
+  '../src/httpSecurity.ts',
+  '../src/tailscale.ts',
+  '../src/validation.ts',
   '../src/platform.ts',
   '../src/commands.ts',
   '../src/audio/tap.ts',
@@ -78,11 +81,13 @@ for (const specifier of modules) {
   await writeFile(tokenPath, JSON.stringify({ port: 8787, token }), 'utf8');
 
   const requested = [];
+  let authorization = '';
   const { findRunningControlPanel } = await import(
     new URL('../src/control/launcher.ts', import.meta.url).href
   );
-  const panel = await findRunningControlPanel(tokenPath, async (input) => {
+  const panel = await findRunningControlPanel(tokenPath, async (input, init) => {
     requested.push(String(input));
+    authorization = new Headers(init?.headers).get('authorization') ?? '';
     return new Response(JSON.stringify({ bot: { ready: true } }), {
       status: 200,
       headers: { 'content-type': 'application/json' },
@@ -91,14 +96,33 @@ for (const specifier of modules) {
   await rm(temp, { recursive: true, force: true });
 
   if (
-    panel !== `http://127.0.0.1:8787/?token=${token}` ||
+    panel !== `http://127.0.0.1:8787/#token=${token}` ||
     requested.length !== 1 ||
-    !requested[0].includes(`/api/state?token=${token}`)
+    !requested[0].endsWith('/api/state') ||
+    authorization !== `Bearer ${token}`
   ) {
     failed++;
     process.stdout.write('  FAIL  desktop launcher attaches to running panel\n');
   } else {
     process.stdout.write('  ok    desktop launcher attaches to running panel\n');
+  }
+}
+
+// Capture inputs cross a process boundary. Reject unknown discriminants and non-finite controls
+// instead of letting them fall through to a default device or poison float samples with NaN.
+{
+  const { finiteNumber, validateSource } = await import(
+    new URL('../src/validation.ts', import.meta.url).href
+  );
+  let rejectedSource = false;
+  let rejectedGain = false;
+  try { validateSource({ kind: 'unexpected', label: 'bad' }); } catch { rejectedSource = true; }
+  try { finiteNumber(Number.NaN, 'Gain', -60, 20); } catch { rejectedGain = true; }
+  if (!rejectedSource || !rejectedGain) {
+    failed++;
+    process.stdout.write('  FAIL  untrusted audio controls are rejected\n');
+  } else {
+    process.stdout.write('  ok    untrusted audio controls are rejected\n');
   }
 }
 
@@ -188,6 +212,7 @@ if (
   /apt install pipewire-utils/i.test(documentation) ||
   documentation.includes('docs.discord.food') ||
   documentation.includes('npm run dist') ||
+  /Microsoft\.DotNet\.SDK\.9|\.NET SDK 9|non-Stage voice/.test(documentation) ||
   !documentation.includes('pipewire-bin') ||
   !packageSource.includes('pipewire-bin | pipewire') ||
   !envExample.includes('relative to the writable runtime root')

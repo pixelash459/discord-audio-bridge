@@ -10,6 +10,8 @@ import type { CaptureTap, DeviceInfo, ProcessInfo, RawFormat, TapOptions, TapSta
 
 const log = logger('pipewire');
 let availability: boolean | undefined;
+let nodeCache: { value: PwNode[]; expires: number } | undefined;
+let nodeDump: Promise<PwNode[]> | undefined;
 
 interface PwNode {
   id: number;
@@ -45,16 +47,30 @@ async function run(command: string, args: string[], timeoutMs = 10_000): Promise
   child.stdout.on('data', (chunk: string) => (stdout += chunk));
   child.stderr.setEncoding('utf8');
   child.stderr.on('data', (chunk: string) => (stderr += chunk));
-  const [code] = (await once(child, 'close')) as [number | null, NodeJS.Signals | null];
-  clearTimeout(timer);
+  let code: number | null;
+  try {
+    [code] = (await once(child, 'close')) as [number | null, NodeJS.Signals | null];
+  } finally {
+    clearTimeout(timer);
+  }
   if (code !== 0) throw new Error(`${command} exited ${code}: ${stderr.trim().slice(0, 400)}`);
   return stdout;
 }
 
 async function dumpNodes(): Promise<PwNode[]> {
-  const raw = await run(config.paths.pwDump, ['Node']);
-  const parsed = JSON.parse(raw) as PwNode[];
-  return Array.isArray(parsed) ? parsed : [];
+  if (nodeCache && nodeCache.expires > Date.now()) return nodeCache.value;
+  if (nodeDump) return nodeDump;
+  nodeDump = run(config.paths.pwDump, ['Node']).then((raw) => {
+    const parsed = JSON.parse(raw) as PwNode[];
+    const value = Array.isArray(parsed) ? parsed : [];
+    nodeCache = { value, expires: Date.now() + 1_000 };
+    return value;
+  });
+  try {
+    return await nodeDump;
+  } finally {
+    nodeDump = undefined;
+  }
 }
 
 /** The sink WirePlumber currently routes default playback to, by node name. */
@@ -140,7 +156,9 @@ async function resolveMonitor(sinkName: string): Promise<string> {
 async function targetForApp(nodeId: number): Promise<string> {
   const node = (await dumpNodes()).find((candidate) => candidate.id === nodeId);
   const name = node ? nodeName(node) : '';
-  if (!name) throw new Error(`That application's audio stream is gone (it stopped or restarted).`);
+  if (!name || props(node!)['media.class'] !== 'Stream/Output/Audio') {
+    throw new Error(`That application's audio stream is gone (it stopped or restarted).`);
+  }
   return name;
 }
 
@@ -193,6 +211,18 @@ export class PipedTap implements CaptureTap {
     ];
     log.debug('spawning pw-record', { args });
     const child = spawn(config.paths.pwRecord, args, { windowsHide: true });
+    await new Promise<void>((resolve, reject) => {
+      const spawned = () => {
+        child.off('error', failed);
+        resolve();
+      };
+      const failed = (error: Error) => {
+        child.off('spawn', spawned);
+        reject(new Error(`Could not start pw-record: ${error.message}`, { cause: error }));
+      };
+      child.once('spawn', spawned);
+      child.once('error', failed);
+    });
 
     const errors = createInterface({ input: child.stderr });
     errors.on('line', (line) => (/\berror\b|failed/i.test(line) ? log.error(line) : log.debug(line)));

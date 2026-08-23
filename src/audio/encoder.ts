@@ -275,7 +275,25 @@ function score(format: DshowFormat): number {
  * Enumerates DirectShow audio inputs. This is the escape hatch for machines without the .NET SDK:
  * pair it with a virtual cable (VB-CABLE) or "Stereo Mix" and no capture helper is needed.
  */
+let dshowCache: { value: DshowDevice[]; expires: number } | undefined;
+let dshowListing: Promise<DshowDevice[]> | undefined;
+
 export async function listDshowDevices(): Promise<DshowDevice[]> {
+  if (!IS_WINDOWS) return [];
+  if (dshowCache && dshowCache.expires > Date.now()) return dshowCache.value;
+  if (dshowListing) return dshowListing;
+  dshowListing = enumerateDshowDevices().then((value) => {
+    dshowCache = { value, expires: Date.now() + 30_000 };
+    return value;
+  });
+  try {
+    return await dshowListing;
+  } finally {
+    dshowListing = undefined;
+  }
+}
+
+async function enumerateDshowDevices(): Promise<DshowDevice[]> {
   if (!IS_WINDOWS) return [];
   const args = ['-hide_banner', '-list_devices', 'true', '-f', 'dshow', '-i', 'dummy'];
   const child = spawn(config.paths.ffmpeg, args, { windowsHide: true });

@@ -3,8 +3,8 @@
   <PropertyGroup>
     <OutputType>Exe</OutputType>
     <!-- Windows-only by construction: WASAPI process loopback has no cross-platform equivalent. -->
-    <TargetFramework>net9.0-windows</TargetFramework>
-    <!-- Run on whatever modern .NET runtime is installed, not strictly 9.x -->
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <!-- Run on newer supported .NET runtimes too; release packages remain self-contained. -->
     <RollForward>LatestMajor</RollForward>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>

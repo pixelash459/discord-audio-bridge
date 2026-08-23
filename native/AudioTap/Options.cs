@@ -1,3 +1,5 @@
+using System.Globalization;
+
 namespace AudioTap;
 
 internal enum Mode
@@ -64,7 +66,7 @@ internal sealed class Options
                     break;
                 case "--pid":
                     o.Source = SourceKind.Process;
-                    o.Pid = uint.Parse(Next(arg));
+                    o.Pid = uint.Parse(Next(arg), NumberStyles.None, CultureInfo.InvariantCulture);
                     break;
                 case "--exclude":
                     o.Exclude = true;
@@ -74,16 +76,16 @@ internal sealed class Options
                     o.DeviceId = Next(arg);
                     break;
                 case "--rate":
-                    o.SampleRate = int.Parse(Next(arg));
+                    o.SampleRate = int.Parse(Next(arg), NumberStyles.None, CultureInfo.InvariantCulture);
                     break;
                 case "--channels":
-                    o.Channels = int.Parse(Next(arg));
+                    o.Channels = int.Parse(Next(arg), NumberStyles.None, CultureInfo.InvariantCulture);
                     break;
                 case "--buffer-ms":
-                    o.BufferMs = int.Parse(Next(arg));
+                    o.BufferMs = int.Parse(Next(arg), NumberStyles.None, CultureInfo.InvariantCulture);
                     break;
                 case "--gain-db":
-                    o.GainDb = double.Parse(Next(arg));
+                    o.GainDb = double.Parse(Next(arg), NumberStyles.Float, CultureInfo.InvariantCulture);
                     break;
                 case "--help":
                 case "-h":
@@ -95,6 +97,13 @@ internal sealed class Options
 
         if (o.Mode == Mode.Capture && o.Source == SourceKind.Process && o.Pid == 0)
             throw new ArgumentException("--capture with a process source requires --pid <n>");
+
+        if (o.SampleRate is < 8_000 or > 384_000)
+            throw new ArgumentOutOfRangeException("--rate", "Sample rate must be between 8000 and 384000 Hz");
+        if (o.Channels is < 1 or > 8)
+            throw new ArgumentOutOfRangeException("--channels", "Channel count must be between 1 and 8");
+        if (!double.IsFinite(o.GainDb))
+            throw new ArgumentOutOfRangeException("--gain-db", "Gain must be a finite number");
 
         o.BufferMs = Math.Clamp(o.BufferMs, 20, 2000);
         o.GainDb = Math.Clamp(o.GainDb, -60, 20);
@@ -112,7 +121,7 @@ internal sealed class Options
               Print processes currently holding an audio render session, as JSON.
 
           AudioTap --capture --pid <n> [--exclude] [options]
-              Per-process loopback capture (Windows 10 build 19041+).
+              Per-process loopback capture (Windows 10 version 2004 / build 19041+).
               --exclude captures everything EXCEPT that process tree.
 
           AudioTap --capture --device <id|default> [options]

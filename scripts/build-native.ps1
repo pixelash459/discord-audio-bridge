@@ -21,7 +21,7 @@ if (-not (Get-Command dotnet -ErrorAction SilentlyContinue)) {
     Write-Host ''
     Write-Host 'The .NET SDK is not installed.' -ForegroundColor Red
     Write-Host ''
-    Write-Host '  Install it with:   winget install Microsoft.DotNet.SDK.9'
+    Write-Host '  Install it with:   winget install Microsoft.DotNet.SDK.10'
     Write-Host '  Or download from:  https://dotnet.microsoft.com/download'
     Write-Host ''
     Write-Host 'Without it you can still use "/stream dshow" with a virtual audio cable,'
@@ -30,9 +30,15 @@ if (-not (Get-Command dotnet -ErrorAction SilentlyContinue)) {
     exit 1
 }
 
+$dotnetVersion = [version](((dotnet --version) -split '-')[0])
+if ($dotnetVersion.Major -lt 10) {
+    Write-Error ".NET 10 SDK is required (found $dotnetVersion). Install it with: winget install Microsoft.DotNet.SDK.10"
+    exit 1
+}
+
 $build = [int](Get-CimInstance Win32_OperatingSystem).BuildNumber
 if ($build -lt 19041) {
-    Write-Warning "Windows build $build detected. Per-process loopback needs build 19041 (Windows 10 2004) or newer."
+    Write-Warning "Windows build $build detected. Per-process loopback needs Windows 10 version 2004 (build 19041) or newer."
 }
 
 Write-Host "Building AudioTap -> $output" -ForegroundColor Cyan

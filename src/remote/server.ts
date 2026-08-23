@@ -1,7 +1,8 @@
 import { randomBytes, timingSafeEqual } from 'node:crypto';
 import { chmodSync, createReadStream, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
-import { networkInterfaces } from 'node:os';
+import { hostname, networkInterfaces } from 'node:os';
+import { isIP } from 'node:net';
 import { extname, join, normalize, resolve, sep, dirname } from 'node:path';
 import {
   ChannelType,
@@ -15,6 +16,17 @@ import { isAudioTapBuilt, listDevices, listProcesses } from '../audio/tap.ts';
 import { config, projectRoot, runtimeRoot } from '../config.ts';
 import { logger } from '../logger.ts';
 import { IS_WINDOWS } from '../platform.ts';
+import {
+  bearerToken,
+  hardenServer,
+  hasExpectedHost,
+  hasTrustedOrigin,
+  methodAllowed,
+  RateLimiter,
+  securityHeaders,
+} from '../httpSecurity.ts';
+import { isAuthenticatedTailscalePeer, isTailscaleAddress } from '../tailscale.ts';
+import { finiteNumber, OPUS_MAX_BITRATE, OPUS_MIN_BITRATE, validateSource } from '../validation.ts';
 import {
   allSessions,
   endSession,
@@ -46,20 +58,22 @@ class RemoteApiError extends Error {
 
 function loadToken(configured?: string): string {
   if (configured) {
-    if (configured.length < 24) throw new Error('REMOTE_TOKEN must contain at least 24 characters.');
+    if (!/^[A-Za-z0-9._~+\/-]{24,256}={0,2}$/.test(configured)) {
+      throw new Error('REMOTE_TOKEN must be 24-256 token-safe characters.');
+    }
     return configured;
   }
 
   if (existsSync(tokenPath)) {
     const saved = readFileSync(tokenPath, 'utf8').trim();
-    if (saved.length >= 24) {
+    if (/^[A-Za-z0-9._~+\/-]{24,256}={0,2}$/.test(saved)) {
       chmodSync(tokenPath, 0o600);
       return saved;
     }
   }
 
   const token = randomBytes(32).toString('base64url');
-  mkdirSync(dirname(tokenPath), { recursive: true });
+  mkdirSync(dirname(tokenPath), { recursive: true, mode: 0o700 });
   writeFileSync(tokenPath, `${token}\n`, { encoding: 'utf8', mode: 0o600 });
   chmodSync(tokenPath, 0o600);
   return token;
@@ -70,18 +84,6 @@ export interface RemoteAccessInfo {
   trustTailscale: boolean;
   tokenPath: string;
   urls: string[];
-}
-
-function normalizedAddress(address?: string | null): string {
-  return (address ?? '').replace(/^::ffff:/i, '').toLowerCase();
-}
-
-/** Tailscale IPv4 CGNAT range and the fixed Tailscale IPv6 ULA prefix. */
-function isTailscaleAddress(address?: string | null): boolean {
-  const normalized = normalizedAddress(address);
-  if (normalized.startsWith('fd7a:115c:a1e0:')) return true;
-  const octets = normalized.split('.').map(Number);
-  return octets.length === 4 && octets[0] === 100 && octets[1]! >= 64 && octets[1]! <= 127;
 }
 
 function requireChannel(client: Client, guildId: string, channelId: string): VoiceBasedChannel {
@@ -95,6 +97,9 @@ function requireChannel(client: Client, guildId: string, channelId: string): Voi
   const missing = [
     permissions.has(PermissionFlagsBits.Connect) ? null : 'Connect',
     permissions.has(PermissionFlagsBits.Speak) ? null : 'Speak',
+    channel.type === ChannelType.GuildStageVoice && !permissions.has(PermissionFlagsBits.MuteMembers)
+      ? 'Mute Members (needed to become a Stage speaker)'
+      : null,
   ].filter(Boolean);
   if (missing.length > 0) {
     throw new RemoteApiError(403, `The bot is missing ${missing.join(' and ')} on #${channel.name}.`);
@@ -106,29 +111,6 @@ function resolveBitrate(channel: VoiceBasedChannel, requested?: number): number 
   const ceiling = Math.min(channel.bitrate, channel.guild.maximumBitrate, 510_000);
   const preferred = requested || config.opus.bitrate || ceiling;
   return Math.min(ceiling, Math.max(8_000, Math.round(preferred)));
-}
-
-function validateSource(value: unknown): SourceSpec {
-  if (!value || typeof value !== 'object') throw new RemoteApiError(400, 'A source is required.');
-  const source = value as Partial<SourceSpec> & Record<string, unknown>;
-  if (source.kind === 'process') {
-    if (!Number.isInteger(source.pid) || Number(source.pid) <= 0) {
-      throw new RemoteApiError(400, 'The process source has an invalid pid.');
-    }
-    return {
-      kind: 'process',
-      pid: Number(source.pid),
-      label: typeof source.label === 'string' ? source.label : `Process ${source.pid}`,
-      exclude: source.exclude === true,
-    };
-  }
-  if (source.kind === 'device' && typeof source.id === 'string' && source.id) {
-    return { kind: 'device', id: source.id, label: typeof source.label === 'string' ? source.label : source.id };
-  }
-  if (source.kind === 'dshow' && typeof source.name === 'string' && source.name) {
-    return { kind: 'dshow', name: source.name, label: typeof source.label === 'string' ? source.label : source.name };
-  }
-  throw new RemoteApiError(400, 'That capture source is invalid.');
 }
 
 async function remoteOptions(client: Client): Promise<unknown> {
@@ -162,14 +144,20 @@ async function remoteOptions(client: Client): Promise<unknown> {
           .map((channel) => {
             const voice = channel as VoiceBasedChannel;
             const permissions = me?.permissionsIn(voice);
+            const missing = [
+              permissions?.has(PermissionFlagsBits.Connect) ? null : 'Connect',
+              permissions?.has(PermissionFlagsBits.Speak) ? null : 'Speak',
+              channel.type === ChannelType.GuildStageVoice && !permissions?.has(PermissionFlagsBits.MuteMembers)
+                ? 'Mute Members for Stage audio'
+                : null,
+            ].filter(Boolean);
             return {
               id: voice.id,
               name: voice.name,
               bitrate: voice.bitrate,
               members: voice.members.size,
-              joinable: Boolean(
-                permissions?.has(PermissionFlagsBits.Connect) && permissions.has(PermissionFlagsBits.Speak),
-              ),
+              joinable: missing.length === 0,
+              unavailableReason: missing.length > 0 ? `Missing ${missing.join(', ')}` : null,
             };
           })
           .sort((a, b) => a.name.localeCompare(b.name)),
@@ -181,19 +169,20 @@ async function remoteOptions(client: Client): Promise<unknown> {
 
 function urlsFor(host: string, port: number, token: string, trustTailscale: boolean): string[] {
   const hosts = new Set<string>();
-  if (host === '0.0.0.0') {
-    hosts.add('127.0.0.1');
+  if (host === '0.0.0.0' || host === '::') {
+    hosts.add(host === '::' ? '::1' : '127.0.0.1');
     for (const entries of Object.values(networkInterfaces())) {
       for (const entry of entries ?? []) {
-        if (!entry.internal && entry.family === 'IPv4') hosts.add(entry.address);
+        if (!entry.internal && (host === '::' || entry.family === 'IPv4')) hosts.add(entry.address);
       }
     }
   } else {
     hosts.add(host);
   }
   return [...hosts].map((address) => {
-    const base = `http://${address}:${port}/`;
-    return trustTailscale && isTailscaleAddress(address) ? base : `${base}?token=${token}`;
+    const displayHost = isIP(address) === 6 ? `[${address}]` : address;
+    const base = `http://${displayHost}:${port}/`;
+    return trustTailscale && isTailscaleAddress(address) ? base : `${base}#token=${token}`;
   });
 }
 
@@ -224,11 +213,19 @@ async function body<T>(req: IncomingMessage): Promise<T> {
     chunks.push(chunk as Buffer);
   }
   if (chunks.length === 0) return {} as T;
+  if (!req.headers['content-type']?.toLowerCase().startsWith('application/json')) {
+    throw new RemoteApiError(415, 'Request body must use application/json.');
+  }
+  let parsed: unknown;
   try {
-    return JSON.parse(Buffer.concat(chunks).toString('utf8')) as T;
+    parsed = JSON.parse(Buffer.concat(chunks).toString('utf8')) as unknown;
   } catch {
     throw new RemoteApiError(400, 'Body was not valid JSON.');
   }
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    throw new RemoteApiError(400, 'JSON body must be an object.');
+  }
+  return parsed as T;
 }
 
 export class RemoteServer {
@@ -239,6 +236,7 @@ export class RemoteServer {
 
   #client: Client;
   #http = createServer();
+  #requests = new RateLimiter();
 
   constructor(
     client: Client,
@@ -252,6 +250,7 @@ export class RemoteServer {
     this.port = port;
     this.token = loadToken(configuredToken);
     this.trustTailscale = trustTailscale;
+    hardenServer(this.#http);
   }
 
   accessUrls(): string[] {
@@ -259,7 +258,13 @@ export class RemoteServer {
   }
 
   async start(): Promise<void> {
-    this.#http.on('request', (req, res) => void this.#route(req, res));
+    this.#http.on('request', (req, res) => {
+      void this.#route(req, res).catch((error) => {
+        log.error('unhandled remote request failure', error);
+        if (!res.headersSent) json(res, 500, { error: 'Internal remote server error.' });
+        else res.destroy();
+      });
+    });
     await new Promise<void>((done, fail) => {
       this.#http.once('error', fail);
       this.#http.listen(this.port, this.host, () => {
@@ -275,17 +280,12 @@ export class RemoteServer {
     log.info('remote control stopped');
   }
 
-  #authorized(req: IncomingMessage): boolean {
+  async #authorized(req: IncomingMessage): Promise<boolean> {
     if (
       this.trustTailscale &&
-      isTailscaleAddress(req.socket.localAddress) &&
-      isTailscaleAddress(req.socket.remoteAddress)
-    ) {
-      return true;
-    }
-    const url = new URL(req.url ?? '/', 'http://remote.local');
-    const supplied =
-      url.searchParams.get('token') ?? req.headers.authorization?.replace(/^Bearer\s+/i, '') ?? '';
+      (await isAuthenticatedTailscalePeer(req.socket.localAddress, req.socket.remoteAddress))
+    ) return true;
+    const supplied = bearerToken(req);
     const actual = Buffer.from(this.token);
     const candidate = Buffer.from(supplied);
     return candidate.length === actual.length && timingSafeEqual(candidate, actual);
@@ -302,7 +302,16 @@ export class RemoteServer {
     );
 
     if (url.pathname.startsWith('/api/')) {
-      if (!this.#authorized(req)) return json(res, 401, { error: 'Bad or missing remote token.' });
+      const configuredHost = this.host === '0.0.0.0' || this.host === '::' ? [] : [this.host];
+      if (!hasExpectedHost(req, [...configuredHost, hostname()]) || !hasTrustedOrigin(req)) {
+        return json(res, 403, { error: 'Cross-origin request rejected.' });
+      }
+      const peer = req.socket.remoteAddress ?? 'unknown';
+      const limit = req.method === 'GET' ? 240 : 60;
+      if (!this.#requests.allow(`${peer}:${req.method}`, limit)) {
+        return json(res, 429, { error: 'Too many remote requests. Wait a moment and try again.' });
+      }
+      if (!(await this.#authorized(req))) return json(res, 401, { error: 'Bad or missing remote token.' });
       try {
         return json(res, 200, await this.#api(req, url));
       } catch (error) {
@@ -344,7 +353,12 @@ export class RemoteServer {
 
     if (route === 'POST /api/stream') {
       if (!input.channelId) throw new RemoteApiError(400, 'channelId is required.');
-      const source = validateSource(input.source);
+      let source: SourceSpec;
+      try {
+        source = validateSource(input.source);
+      } catch (error) {
+        throw new RemoteApiError(400, error instanceof Error ? error.message : String(error));
+      }
       if (source.kind === 'dshow' && !IS_WINDOWS) {
         throw new RemoteApiError(400, 'DirectShow sources are Windows-only.');
       }
@@ -355,6 +369,13 @@ export class RemoteServer {
             ? 'AudioTap is not built, so only cable sources are available.'
             : 'The PipeWire capture tools are missing on the host, so nothing is capturable.',
         );
+      }
+      if (input.bitrate !== undefined) {
+        try {
+          finiteNumber(input.bitrate, 'Bitrate', OPUS_MIN_BITRATE, OPUS_MAX_BITRATE);
+        } catch (error) {
+          throw new RemoteApiError(400, error instanceof Error ? error.message : String(error));
+        }
       }
       const channel = requireChannel(this.#client, input.guildId, input.channelId);
       const session = await startOrRetarget(channel, source, resolveBitrate(channel, input.bitrate));
@@ -377,15 +398,21 @@ export class RemoteServer {
       if (typeof input.muted !== 'boolean') throw new RemoteApiError(400, 'muted must be true or false.');
       await session.setMuted(input.muted);
     } else if (route === 'POST /api/gain') {
-      if (typeof input.db !== 'number' || input.db < -60 || input.db > 20) {
-        throw new RemoteApiError(400, 'Gain must be between -60 and +20 dB.');
+      let db: number;
+      try {
+        db = finiteNumber(input.db, 'Gain', -60, 20);
+      } catch (error) {
+        throw new RemoteApiError(400, error instanceof Error ? error.message : String(error));
       }
-      await session.setGain(input.db);
+      await session.setGain(db);
     } else if (route === 'POST /api/bitrate') {
-      if (typeof input.bitrate !== 'number' || input.bitrate < 8_000 || input.bitrate > 510_000) {
-        throw new RemoteApiError(400, 'Bitrate must be between 8000 and 510000.');
+      let bitrate: number;
+      try {
+        bitrate = finiteNumber(input.bitrate, 'Bitrate', OPUS_MIN_BITRATE, OPUS_MAX_BITRATE);
+      } catch (error) {
+        throw new RemoteApiError(400, error instanceof Error ? error.message : String(error));
       }
-      await session.setBitrate(input.bitrate);
+      await session.setBitrate(bitrate);
     } else {
       throw new RemoteApiError(404, `No remote route for ${route}.`);
     }
@@ -394,38 +421,37 @@ export class RemoteServer {
   }
 
   #serveStatic(pathname: string, res: ServerResponse): void {
+    const req = res.req;
+    if (!methodAllowed(req, res, ['GET', 'HEAD'])) return;
     const relative = pathname === '/' ? 'index.html' : pathname.replace(/^\/+/, '');
     const target = resolve(webRoot, normalize(relative));
     if (target !== webRoot && !target.startsWith(webRoot + sep)) {
-      res.writeHead(403).end('Forbidden');
+      res.writeHead(403, securityHeaders('text/plain; charset=utf-8')).end('Forbidden');
       return;
     }
     if (!existsSync(target)) {
-      res.writeHead(404, { 'content-type': 'text/plain' }).end('Not found');
+      res.writeHead(404, securityHeaders('text/plain; charset=utf-8')).end('Not found');
       return;
     }
-    res.writeHead(200, {
-      'content-type': MIME[extname(target).toLowerCase()] ?? 'application/octet-stream',
-      'cache-control': 'no-store',
-      'content-security-policy':
-        "default-src 'self'; script-src 'self'; style-src 'self'; connect-src 'self'; " +
-        "img-src 'self' data:; base-uri 'none'; frame-ancestors 'none'",
-      'referrer-policy': 'no-referrer',
-      'x-content-type-options': 'nosniff',
-      'x-frame-options': 'DENY',
+    res.writeHead(200, securityHeaders(MIME[extname(target).toLowerCase()] ?? 'application/octet-stream'));
+    if (req.method === 'HEAD') {
+      res.end();
+      return;
+    }
+    const stream = createReadStream(target);
+    stream.once('error', (error) => {
+      log.warn('remote control asset read failed', error);
+      res.destroy(error);
     });
-    createReadStream(target).pipe(res);
+    stream.pipe(res);
   }
 }
 
 function json(res: ServerResponse, status: number, value: unknown): void {
   const text = JSON.stringify(value);
   res.writeHead(status, {
-    'content-type': 'application/json; charset=utf-8',
+    ...securityHeaders('application/json; charset=utf-8'),
     'content-length': Buffer.byteLength(text),
-    'cache-control': 'no-store',
-    'referrer-policy': 'no-referrer',
-    'x-content-type-options': 'nosniff',
   });
   res.end(text);
 }

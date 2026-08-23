@@ -109,6 +109,7 @@ export class Pacer {
 
   /** Live gain in dB, applied to float samples before anything else can touch them. */
   setGain(db: number): void {
+    if (!Number.isFinite(db) || db < -60 || db > 20) throw new RangeError('Gain must be between -60 and +20 dB.');
     this.#gain = Math.pow(10, db / 20);
   }
 

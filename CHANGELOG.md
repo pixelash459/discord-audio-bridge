@@ -6,6 +6,45 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [1.2.0] - 2026-08-23
+
+### Added
+
+- Reworked both control surfaces around explicit Destination and Source modules, clearer onboarding,
+  deliberate Start/Apply actions, responsive touch targets, keyboard navigation, visible focus, and
+  semantic live status. The remote dashboard now offers the same route selection as the main app.
+- Stage-channel support now promotes the bot to speaker and reports the required **Mute Members**
+  permission before joining. Main and remote controls expose Discord self-mute, gain, and the actual
+  channel-limited Opus bitrate.
+- Live HTTP/WebSocket boundary tests, semantic HTML/JavaScript checks, weekly Dependabot updates,
+  and a production dependency audit now run in CI.
+
+### Changed
+
+- Tokens are delivered in URL fragments, removed from the address bar, and sent through Bearer
+  headers or WebSocket subprotocols instead of leaking into HTTP request URLs and logs.
+- Tokenless tailnet access now verifies the peer through `tailscale whois --json`; matching a broad
+  CGNAT or IPv6 range alone is no longer trusted.
+- Windows projects target .NET 10 LTS. TypeScript 7, esbuild 0.28, Node 26 types, and all official
+  GitHub Actions were updated to current releases; workflow actions are pinned to immutable commits.
+
+### Fixed
+
+- Rapid capture/encoder failures no longer reset the retry counter as soon as one packet arrives.
+  A pipeline must remain healthy for 30 seconds to regain its bounded retry budget, preventing an
+  endless AudioTap/ffmpeg process loop. All capture helpers are tracked and cleaned up on shutdown;
+  overlapping source refreshes are coalesced and briefly cached instead of spawning duplicate
+  AudioTap, `pw-dump`, or DirectShow enumeration processes.
+- Destroyed voice sessions remove themselves from the registry, Discord mute status reflects the
+  live voice state, PipeWire targets are revalidated before capture, and `pw-record` launch failures
+  are surfaced immediately.
+- API, configuration, environment-file, audio-source, path, port, gain, and bitrate inputs are now
+  strictly typed and range checked, including NaN/infinity rejection and safe environment quoting.
+- Both web servers now enforce request/header/idle timeouts, bounded rate limits, JSON body limits,
+  same-origin and DNS-rebinding checks, restrictive browser headers, WebSocket payload/client/
+  backpressure limits, and generic internal-error responses.
+- Fatal asynchronous errors now perform bounded graceful cleanup with a non-zero exit code.
+
 ## [1.1.3] - 2026-08-23
 
 ### Fixed
@@ -121,7 +160,8 @@ First release.
 - ffmpeg's Ogg muxer defaults to one-second pages, which starves the Discord player. This project
   sets `-page_duration 20000`; measured, that is 163 ms to first packet versus 3186 ms.
 
-[Unreleased]: https://github.com/AshutoshChaudhary-lgtm/discord-audio-bridge/compare/v1.1.3...HEAD
+[Unreleased]: https://github.com/AshutoshChaudhary-lgtm/discord-audio-bridge/compare/v1.2.0...HEAD
+[1.2.0]: https://github.com/AshutoshChaudhary-lgtm/discord-audio-bridge/compare/v1.1.3...v1.2.0
 [1.1.3]: https://github.com/AshutoshChaudhary-lgtm/discord-audio-bridge/compare/v1.1.2...v1.1.3
 [1.1.2]: https://github.com/AshutoshChaudhary-lgtm/discord-audio-bridge/compare/v1.1.1...v1.1.2
 [1.1.1]: https://github.com/AshutoshChaudhary-lgtm/discord-audio-bridge/compare/v1.1.0...v1.1.1

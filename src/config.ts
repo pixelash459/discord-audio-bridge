@@ -1,4 +1,5 @@
 import { existsSync, readFileSync } from 'node:fs';
+import { isIP } from 'node:net';
 import { dirname, join, resolve } from 'node:path';
 import { parseEnv } from 'node:util';
 
@@ -92,12 +93,36 @@ function optional(name: string): string | undefined {
   return value ? value : undefined;
 }
 
-function integer(name: string, fallback: number): number {
+function integer(name: string, fallback: number, min: number, max: number): number {
   const raw = optional(name);
   if (raw === undefined) return fallback;
-  const value = Number.parseInt(raw, 10);
-  if (!Number.isFinite(value)) throw new Error(`${name} must be an integer, got "${raw}"`);
+  if (!/^-?\d+$/.test(raw)) throw new Error(`${name} must be a whole number, got "${raw}"`);
+  const value = Number(raw);
+  if (!Number.isSafeInteger(value) || value < min || value > max) {
+    throw new Error(`${name} must be between ${min} and ${max}, got "${raw}"`);
+  }
   return value;
+}
+
+function boolean(name: string, fallback: boolean): boolean {
+  const raw = optional(name)?.toLowerCase();
+  if (raw === undefined) return fallback;
+  if (raw === 'true') return true;
+  if (raw === 'false') return false;
+  throw new Error(`${name} must be true or false, got "${raw}"`);
+}
+
+function safePath(name: string, fallback: string): string {
+  const value = optional(name) ?? fallback;
+  if (value.length > 4_096 || /[\0\r\n]/.test(value)) throw new Error(`${name} contains invalid characters.`);
+  return value;
+}
+
+function remoteHost(): string {
+  const host = optional('REMOTE_HOST') ?? '0.0.0.0';
+  const hostname = /^(?=.{1,253}$)(?!-)[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*$/;
+  if (isIP(host) === 0 && !hostname.test(host)) throw new Error(`REMOTE_HOST is invalid: "${host}"`);
+  return host;
 }
 
 const vbrModes = ['off', 'on', 'constrained'] as const;
@@ -123,8 +148,17 @@ function defaultAudioTapPath(): string {
 function logFile(): string | undefined {
   const raw = optional('LOG_FILE');
   if (raw?.toLowerCase() === 'off') return undefined;
+  if (raw && (raw.length > 4_096 || /[\0\r\n]/.test(raw))) {
+    throw new Error('LOG_FILE contains invalid characters.');
+  }
   // Relative to the runtime root, so a read-only install still logs into the user's state dir.
   return resolve(runtimeRoot, raw ?? join('logs', 'bridge.log'));
+}
+
+function logLevel(): LogLevel {
+  const raw = (optional('LOG_LEVEL') ?? 'info') as LogLevel;
+  if (!logLevels.includes(raw)) throw new Error(`LOG_LEVEL must be one of ${logLevels.join(' | ')}`);
+  return raw;
 }
 
 export const config = {
@@ -143,39 +177,36 @@ export const config = {
   },
   opus: {
     /** undefined means "match whatever the voice channel is set to". */
-    bitrate: optional('OPUS_BITRATE') ? integer('OPUS_BITRATE', 0) : undefined,
+    bitrate: optional('OPUS_BITRATE') ? integer('OPUS_BITRATE', 0, 8_000, 510_000) : undefined,
     vbr: vbr(),
-    complexity: Math.min(10, Math.max(0, integer('OPUS_COMPLEXITY', 10))),
+    complexity: integer('OPUS_COMPLEXITY', 10, 0, 10),
   },
   capture: {
-    bufferMs: Math.min(2000, Math.max(20, integer('CAPTURE_BUFFER_MS', 120))),
+    bufferMs: integer('CAPTURE_BUFFER_MS', 120, 20, 2_000),
   },
   control: {
     /** Loopback-only control panel. Set CONTROL_PORT=0 to disable it entirely. */
-    port: integer('CONTROL_PORT', 8787),
-    autoOpen: (optional('CONTROL_OPEN') ?? 'false').toLowerCase() === 'true',
+    port: integer('CONTROL_PORT', 8787, 0, 65_535),
+    autoOpen: boolean('CONTROL_OPEN', false),
   },
   remote: {
     /** Network-facing runtime controls only. Set REMOTE_PORT=0 to disable. */
-    port: integer('REMOTE_PORT', 8788),
-    host: optional('REMOTE_HOST') ?? '0.0.0.0',
+    port: integer('REMOTE_PORT', 8788, 0, 65_535),
+    host: remoteHost(),
     token: optional('REMOTE_TOKEN'),
     /** Personal tailnets can use Tailscale's device authentication instead of another URL token. */
-    trustTailscale: (optional('REMOTE_TRUST_TAILSCALE') ?? 'true').toLowerCase() === 'true',
+    trustTailscale: boolean('REMOTE_TRUST_TAILSCALE', true),
   },
   paths: {
-    ffmpeg: optional('FFMPEG_PATH') ?? 'ffmpeg',
-    audioTap: optional('AUDIOTAP_PATH') ?? defaultAudioTapPath(),
+    ffmpeg: safePath('FFMPEG_PATH', 'ffmpeg'),
+    audioTap: safePath('AUDIOTAP_PATH', defaultAudioTapPath()),
     /** PipeWire CLI tools used as the Linux capture helper. */
-    pwRecord: optional('PWRECORD_PATH') ?? 'pw-record',
-    pwDump: optional('PWDUMP_PATH') ?? 'pw-dump',
+    pwRecord: safePath('PWRECORD_PATH', 'pw-record'),
+    pwDump: safePath('PWDUMP_PATH', 'pw-dump'),
     /** Persistent UTF-8 JSON-lines log. Set LOG_FILE=off to keep logs in memory/console only. */
     logFile: logFile(),
   },
-  logLevel: ((): LogLevel => {
-    const raw = (optional('LOG_LEVEL') ?? 'info') as LogLevel;
-    return logLevels.includes(raw) ? raw : 'info';
-  })(),
+  logLevel: logLevel(),
 } as const;
 
 /**

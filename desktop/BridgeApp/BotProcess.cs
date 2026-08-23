@@ -7,7 +7,7 @@ namespace BridgeApp;
 
 internal sealed record ControlEndpoint(int Port, string Token)
 {
-    public string Url => $"http://127.0.0.1:{Port}/?token={Token}";
+    public string Url => $"http://127.0.0.1:{Port}/#token={Token}";
     public string StateUrl => $"http://127.0.0.1:{Port}/api/state";
 }
 

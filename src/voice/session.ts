@@ -11,7 +11,7 @@ import {
   type AudioResource,
   type VoiceConnection,
 } from '@discordjs/voice';
-import type { VoiceBasedChannel } from 'discord.js';
+import { ChannelType, type VoiceBasedChannel } from 'discord.js';
 
 import { config, DISCORD_AUDIO } from '../config.ts';
 import { logger } from '../logger.ts';
@@ -73,6 +73,7 @@ function describeDshowCost(format: DshowFormat): string | null {
 
 const MAX_RESTART_ATTEMPTS = 5;
 const RESTART_BACKOFF_MS = [500, 1_000, 2_000, 4_000, 8_000];
+const STABLE_PIPELINE_MS = 30_000;
 
 /**
  * One guild's bridge: a WASAPI tap feeding an ffmpeg/libopus encoder feeding a Discord voice
@@ -101,6 +102,7 @@ export class BridgeSession {
   #restarting = false;
   #changingAudio = false;
   #destroyed = false;
+  #stableTimer: NodeJS.Timeout | undefined;
 
   private constructor(channel: VoiceBasedChannel, connection: VoiceConnection, source: SourceSpec, bitrate: number, gainDb: number) {
     this.guildId = channel.guild.id;
@@ -164,6 +166,22 @@ export class BridgeSession {
       channel: channel.id,
       durationMs: Math.round(performance.now() - started),
     });
+    if (channel.type === ChannelType.GuildStageVoice) {
+      try {
+        await channel.guild.members.me?.voice.setSuppressed(false);
+        log.info('bot promoted to speaker in Stage channel', {
+          guild: channel.guild.id,
+          channel: channel.id,
+        });
+      } catch (error) {
+        connection.destroy();
+        throw new Error(
+          `Joined ${channel.name}, but Discord would not make the bot a Stage speaker. ` +
+            'Grant Mute Members in that Stage channel.',
+          { cause: error },
+        );
+      }
+    }
     const session = new BridgeSession(channel, connection, source, options.bitrate, options.gainDb ?? 0);
     await session.#startAudio();
     return session;
@@ -212,6 +230,7 @@ export class BridgeSession {
   /** Re-encodes at a new bitrate. Requires an encoder restart; the connection is untouched. */
   async setBitrate(bitrate: number): Promise<void> {
     return this.#mutate(async () => {
+      if (!Number.isFinite(bitrate)) throw new RangeError('Bitrate must be a finite number.');
       const target = Math.min(this.bitrateCeiling, Math.max(8_000, Math.round(bitrate)));
       if (target === this.#bitrate) {
         log.debug('encoder bitrate is already at target', { guild: this.guildId, bitrate: target });
@@ -229,6 +248,9 @@ export class BridgeSession {
    */
   async setGain(db: number): Promise<void> {
     return this.#mutate(async () => {
+      if (!Number.isFinite(db) || db < -60 || db > 20) {
+        throw new RangeError('Gain must be between -60 and +20 dB.');
+      }
       if (db === this.#gainDb) {
         log.debug('capture gain is already at target', { guild: this.guildId, db });
         return;
@@ -257,8 +279,8 @@ export class BridgeSession {
       ) {
         throw new Error('Discord rejected the voice-state mute update.');
       }
-      await entersState(this.#connection, VoiceConnectionStatus.Ready, 10_000);
       this.#muted = muted;
+      await entersState(this.#connection, VoiceConnectionStatus.Ready, 10_000);
       log.info(muted ? 'bot muted in voice channel' : 'bot unmuted in voice channel', {
         guild: this.guildId,
         channel: this.channelId,
@@ -275,7 +297,7 @@ export class BridgeSession {
       bitrate: this.#bitrate,
       bitrateCeiling: this.bitrateCeiling,
       gainDb: this.#gainDb,
-      muted: this.#muted,
+      muted: this.#channel.guild.members.me?.voice.selfMute ?? this.#muted,
       vbr: config.opus.vbr,
       complexity: config.opus.complexity,
       captureFormat: this.#captureFormat,
@@ -292,6 +314,7 @@ export class BridgeSession {
   async destroy(): Promise<void> {
     if (this.#destroyed) return;
     this.#destroyed = true;
+    if (sessions.get(this.guildId) === this) sessions.delete(this.guildId);
     log.info('ending bridge session', { guild: this.guildId, channel: this.channelId });
 
     this.#player.stop(true);
@@ -381,6 +404,13 @@ export class BridgeSession {
 
     this.#player.play(resource);
     this.#startedAt = Date.now();
+    if (this.#stableTimer) clearTimeout(this.#stableTimer);
+    this.#stableTimer = setTimeout(() => {
+      if (this.#encoder === encoder && !this.#destroyed) {
+        if (this.#restarts > 0) log.info('audio pipeline remained stable; restart budget restored');
+        this.#restarts = 0;
+      }
+    }, STABLE_PIPELINE_MS);
     log.info(`streaming ${this.#source.label} at ${Math.round(this.#bitrate / 1000)} kbps`, {
       guild: this.guildId,
       capture: this.#captureFormat,
@@ -388,6 +418,8 @@ export class BridgeSession {
   }
 
   async #stopAudio(): Promise<void> {
+    if (this.#stableTimer) clearTimeout(this.#stableTimer);
+    this.#stableTimer = undefined;
     const [tap, encoder] = [this.#tap, this.#encoder];
     this.#tap = null;
     this.#encoder = null;
@@ -453,8 +485,6 @@ export class BridgeSession {
     });
 
     this.#player.on(AudioPlayerStatus.Playing, () => {
-      // Reaching Playing means packets are flowing; forgive the earlier failures.
-      this.#restarts = 0;
       log.info('audio player is receiving packets', { guild: this.guildId });
     });
 

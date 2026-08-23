@@ -109,10 +109,10 @@ Windows 11 26200, Node 26.4, ffmpeg 8.1.2, tapping an `ffplay` process rendering
 
 | | Windows | Linux |
 | --- | --- | --- |
-| OS | Windows 10 build 19041+ (per-process loopback) | A Linux desktop session running PipeWire |
+| OS | Windows 10 version 2004 / build 19041+ | A Linux desktop session running PipeWire |
 | Node.js 22.18+ | only for running from source | only for running from source |
 | ffmpeg with libopus | required | required (`apt install ffmpeg` / `dnf install ffmpeg-free`) |
-| .NET SDK 9+ | only for building AudioTap and the optional desktop shell from source; packaged AudioTap is self-contained | not needed |
+| .NET 10 SDK | only for building AudioTap and the optional desktop shell from source; packaged AudioTap is self-contained | not needed |
 | PipeWire tools | — | `pipewire-bin` on Debian/Ubuntu or `pipewire-utils` on Fedora (`pw-record` and `pw-dump`) |
 | WebView2 runtime | only for `npm run app`; `npm start` uses a browser | not needed — use a browser |
 
@@ -191,8 +191,8 @@ wrapper is Windows-only.
    precisely so this works on a fresh clone; saving a token signs in immediately, with no restart.
    (Editing `.env` by hand does the same job.)
 5. **Installation** → *Guild Install*, scopes `bot` + `applications.commands`, permissions
-   **Connect** and **Speak** — plus **Manage Channels** if you want the bot to be able to raise a
-   channel's bitrate for you.
+   **Connect** and **Speak**. Add **Manage Channels** if the bot should raise channel bitrate, and
+   **Mute Members** if it should automatically become a speaker in Stage channels.
 6. Open the generated install link and add the bot to your server.
 7. Press **Register slash commands** in the Setup tab.
 
@@ -207,10 +207,10 @@ Three tabs, served by the bot on `127.0.0.1`. Packaged Linux launchers open the 
 automatically. Source checkouts print it in the terminal; on Windows, `npm run app` wraps the same
 page in a native WebView2 window.
 
-**Stream** — pick a server and voice channel, then choose an application, output device, or (on
-Windows) DirectShow input. The app list shows processes that currently hold an audio session, with a
-pulse next to active ones. Clicking a source starts the stream immediately; selecting another source
-retargets without leaving the channel.
+**Stream** — first pick a server and voice channel, then choose an application, output device, or
+(on Windows) DirectShow input. The app list shows processes that currently hold an audio session,
+with a pulse next to active ones. Nothing changes in Discord until **Start stream** (or **Apply
+route**) is pressed, so exploring the list cannot accidentally retarget a live stream.
 
 Once running you get stereo peak/RMS meters, the negotiated capture format, UDP ping, jitter-buffer
 fill, silence-fill and drift-trim counters, plus live mute, gain, bitrate, and stop controls. The
@@ -232,15 +232,19 @@ to `logs/desktop.log` in a development checkout. Credentials are redacted before
 
 The bot also serves a separate, restricted dashboard on port `8788`. It is intended for a phone or
 another computer on the same LAN or Tailscale network. At startup, the terminal prints one URL for
-each local network address; open the appropriate URL on the other device. Personal Tailscale peers
-connect directly without another prompt by default, using the tailnet as the trust boundary. LAN
-URLs retain a persistent access token from `.remote-token` because a LAN may contain other devices.
+each local network address; open the appropriate URL on the other device. With trust enabled, the
+server asks the local Tailscale daemon to identify each `100.x`/tailnet peer with `tailscale whois`
+before allowing tokenless control—an address merely being in the CGNAT range is not enough. LAN URLs
+carry a persistent access token from `.remote-token` in the URL fragment; the page moves it into a
+Bearer header and removes it from the address bar.
 
 The remote dashboard can select a capture source and Discord server/voice-channel destination,
 start or retarget a stream, mute/unmute the bot in Discord, stop it, and adjust gain and Opus
 bitrate. It cannot read or edit the Discord token, change setup, build helpers, or register commands.
-Treat a LAN tokenized URL like a password. Set `REMOTE_PORT=0` to disable the network listener, or
-`REMOTE_TRUST_TAILSCALE=false` to require the app token on Tailscale too.
+Treat a LAN tokenized URL like a password. Plain LAN HTTP is not encrypted against a network
+observer, so prefer Tailscale when possible. Set `REMOTE_PORT=0` to disable the network listener,
+bind `REMOTE_HOST` to one interface, or set `REMOTE_TRUST_TAILSCALE=false` to require the app token
+on Tailscale too.
 
 Windows may show a firewall prompt for Node on first use. Allow private networks. For Tailscale,
 open the URL containing the host's `100.x.y.z` address. If an inbound firewall rule is needed, add
@@ -254,8 +258,11 @@ attaches to that process instead of starting another one.
 
 The panel binds to `127.0.0.1` only and is never reachable from the network. Because loopback alone
 is not authentication, every API call and WebSocket upgrade also requires a token minted at startup
-and written to `.control-token`. The bot token is write-only over the API — reads report only
-whether one is set. Set `CONTROL_PORT=0` to disable the panel entirely. See [SECURITY.md](SECURITY.md).
+and written to `.control-token`. Access tokens arrive in URL fragments (not HTTP request URLs), are
+removed from the address bar, and are sent as Bearer or WebSocket-subprotocol credentials. Both web
+services enforce origin/Host checks, conservative HTTP limits, security headers, input size/type
+validation, and rate limits. The bot token is write-only over the API—reads report only whether one
+is set. Set `CONTROL_PORT=0` to disable the panel entirely. See [SECURITY.md](SECURITY.md).
 
 ## Slash commands
 
@@ -365,8 +372,8 @@ runtime root, so it has only one `.env`.
 | `CONTROL_OPEN` | `false` | Open the panel in your browser at startup. |
 | `REMOTE_HOST` | `0.0.0.0` | Bind address for the restricted remote dashboard. The default covers LAN and Tailscale IPv4. |
 | `REMOTE_PORT` | `8788` | Remote dashboard port. `0` disables remote access. |
-| `REMOTE_TRUST_TAILSCALE` | `true` | Trust connections where both ends use Tailscale addresses; no second token prompt. |
-| `REMOTE_TOKEN` | generated | Optional fixed secret of at least 24 characters; normally use `.remote-token` generated by the app. |
+| `REMOTE_TRUST_TAILSCALE` | `true` | Allow tokenless peers only after `tailscale whois --json` verifies their tailnet identity. |
+| `REMOTE_TOKEN` | generated | Optional fixed 24–256 character token-safe secret; normally use `.remote-token` generated by the app. |
 | `FFMPEG_PATH` | `ffmpeg` | |
 | `AUDIOTAP_PATH` | auto | Windows capture helper. |
 | `PWRECORD_PATH` | `pw-record` | Linux capture tool. |
@@ -434,7 +441,7 @@ SDK, install it or use a DirectShow source.
 desktop-session user, then confirm both `pw-record --version` and `pw-dump --version` work.
 
 **Activation fails with `E_NOTIMPL` or `AUDCLNT_E_…` (Windows).** Per-process loopback needs
-Windows 10 build 19041 or newer — check with `winver`. Some virtualised and remote-desktop audio
+Windows 10 version 2004 (build 19041) or newer — check with `winver`. Some virtualised and remote-desktop audio
 stacks do not implement it.
 
 **Nothing capturable on Linux even though audio is playing.** Run `pw-dump` as the same desktop user
@@ -449,10 +456,18 @@ or is genuinely idle. `npm run doctor` shows a live peak level per process.
 the network.
 
 **The bot connects then immediately leaves.** Almost always a missing **Connect** or **Speak**
-permission on that specific channel.
+permission on that specific channel. Stage channels additionally need **Mute Members** so the bot
+can unsuppress itself and become a speaker.
+
+**Several AudioTap or `pw-record` processes keep appearing.** The bridge retries a failed capture
+with bounded backoff and gives up after five attempts unless the pipeline remains healthy for 30
+seconds. Current capture children are tracked and stopped during stream replacement and shutdown.
+Overlapping source refreshes also share a short-lived enumeration result instead of spawning duplicate
+helpers. If an older build left helpers behind, stop those once, then upgrade; 1.2.0 prevents the
+churn and orphaning paths that caused this.
 
 **`No compatible encryption modes`, or close code 4017.** Discord requires DAVE end-to-end
-encryption for non-Stage voice calls; clients without it are disconnected with 4017.
+encryption for voice calls; clients without it are disconnected with 4017.
 `@discordjs/voice` 0.19.2+ pulls in `@snazzah/davey` for DAVE support. Confirm with
 `npm run doctor` that the DAVE dependency is present.
 
@@ -484,6 +499,8 @@ captures whatever you point it at; deciding what that should be is your call.
 - [WebView2 in WinForms](https://learn.microsoft.com/en-us/microsoft-edge/webview2/get-started/winforms)
 - [discord.js voice guide](https://discordjs.guide/voice)
 - [Node.js built-in TypeScript support](https://nodejs.org/api/typescript.html)
+- [Tailscale CLI `whois`](https://tailscale.com/docs/reference/tailscale-cli#whois)
+- [OWASP WebSocket Security Cheat Sheet](https://cheatsheetseries.owasp.org/cheatsheets/WebSocket_Security_Cheat_Sheet.html)
 - [Ubuntu `pipewire-bin` file list](https://packages.ubuntu.com/noble/all/pipewire-bin/filelist)
 - [Fedora `pipewire-utils`](https://packages.fedoraproject.org/pkgs/pipewire/pipewire-utils/)
 

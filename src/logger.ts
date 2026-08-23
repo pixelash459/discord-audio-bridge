@@ -1,5 +1,5 @@
 import { config, type LogLevel } from './config.ts';
-import { appendFileSync, existsSync, mkdirSync, renameSync, statSync } from 'node:fs';
+import { appendFileSync, chmodSync, existsSync, mkdirSync, renameSync, statSync } from 'node:fs';
 import { dirname } from 'node:path';
 
 const rank: Record<LogLevel, number> = { error: 0, warn: 1, info: 2, debug: 3 };
@@ -97,7 +97,7 @@ function safeJson(_key: string, value: unknown): unknown {
 /** Removes credentials from messages before they reach history, the UI, console, or disk. */
 function redact(value: string): string {
   let result = value
-    .replace(/([?&]token=)[^&\s"']+/gi, '$1[REDACTED]')
+    .replace(/([?#&]token=)[^&#\s"']+/gi, '$1[REDACTED]')
     .replace(/(authorization["']?\s*[:=]\s*["']?bearer\s+)[^\s,"'}]+/gi, '$1[REDACTED]')
     .replace(/(DISCORD_TOKEN\s*[=:]\s*)[^\s,"'}]+/gi, '$1[REDACTED]');
 
@@ -112,7 +112,7 @@ function persist(entry: LogEntry): void {
 
   try {
     if (!fileReady) {
-      mkdirSync(dirname(path), { recursive: true });
+      mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
       if (existsSync(path) && statSync(path).size >= MAX_LOG_BYTES) {
         const rotated = `${path}.1`;
         // Windows rename does not replace an existing file. A timestamp keeps every rollover
@@ -120,10 +120,14 @@ function persist(entry: LogEntry): void {
         const target = existsSync(rotated) ? `${path}.${Date.now()}` : rotated;
         renameSync(path, target);
       }
+      if (existsSync(path)) chmodSync(path, 0o600);
       fileReady = true;
     }
 
-    appendFileSync(path, `${JSON.stringify({ ...entry, at: new Date(entry.at).toISOString() })}\n`, 'utf8');
+    appendFileSync(path, `${JSON.stringify({ ...entry, at: new Date(entry.at).toISOString() })}\n`, {
+      encoding: 'utf8',
+      mode: 0o600,
+    });
   } catch (error) {
     fileUnavailable = true;
     const reason = error instanceof Error ? error.message : String(error);

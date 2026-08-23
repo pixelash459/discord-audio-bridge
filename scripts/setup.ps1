@@ -40,13 +40,22 @@ $hasNode = Test-Tool -Name 'Node.js' -Command 'node' -Arguments @('--version') `
 Test-Tool -Name 'ffmpeg' -Command 'ffmpeg' -Arguments @('-version') `
     -Install 'winget install Gyan.FFmpeg' | Out-Null
 $hasDotnet = Test-Tool -Name '.NET SDK' -Command 'dotnet' -Arguments @('--version') `
-    -Install 'winget install Microsoft.DotNet.SDK.9' -Optional
+    -Install 'winget install Microsoft.DotNet.SDK.10' -Optional
 
 if ($hasNode) {
     $nodeVersion = [version](((node --version) -replace '^v', '') -split '-')[0]
     if ($nodeVersion -lt [version]'22.18.0') {
         Write-Host "  [ TOO OLD ] Node $nodeVersion - this project runs TypeScript directly and needs 22.18+" -ForegroundColor Red
         $problems += 'Node.js version'
+    }
+}
+
+if ($hasDotnet) {
+    $dotnetVersion = [version](((dotnet --version) -split '-')[0])
+    if ($dotnetVersion.Major -lt 10) {
+        Write-Host "  [ TOO OLD ] .NET SDK $dotnetVersion - Windows builds target .NET 10 LTS" -ForegroundColor Yellow
+        Write-Host '               winget install Microsoft.DotNet.SDK.10' -ForegroundColor DarkGray
+        $hasDotnet = $false
     }
 }
 

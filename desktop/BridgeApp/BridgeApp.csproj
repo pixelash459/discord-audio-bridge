@@ -2,7 +2,7 @@
 
   <PropertyGroup>
     <OutputType>WinExe</OutputType>
-    <TargetFramework>net9.0-windows</TargetFramework>
+    <TargetFramework>net10.0-windows</TargetFramework>
     <RollForward>LatestMajor</RollForward>
     <UseWindowsForms>true</UseWindowsForms>
     <!-- The WebView2 package always brings its WPF control along, which references a different

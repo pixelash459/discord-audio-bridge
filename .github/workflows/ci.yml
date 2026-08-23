@@ -25,31 +25,57 @@ jobs:
       matrix:
         node: ['22.18', '26']
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: ${{ matrix.node }}
           cache: npm
 
       - run: npm ci
 
+      - name: Audit production dependencies
+        run: npm audit --omit=dev --audit-level=high
+
       - name: Typecheck
         run: npm run typecheck
 
+      - name: Validate browser interfaces
+        run: npm run lint:web
+
       - name: Verify the sources actually load and the pacer keeps real time
         run: npm run smoke
+
+      - name: Exercise authenticated HTTP and WebSocket boundaries
+        shell: bash
+        run: |
+          export BRIDGE_RUNTIME_ROOT="$RUNNER_TEMP/bridge-http-smoke"
+          export CONTROL_PORT=18787
+          export REMOTE_HOST=127.0.0.1
+          export REMOTE_PORT=18788
+          export REMOTE_TOKEN=integration-test-remote-token-123456
+          export REMOTE_TRUST_TAILSCALE=false
+          node src/index.ts > "$RUNNER_TEMP/bridge-http-smoke.log" 2>&1 &
+          bridge_pid=$!
+          trap 'kill -INT "$bridge_pid" 2>/dev/null || true' EXIT
+          for attempt in {1..50}; do
+            test -f "$BRIDGE_RUNTIME_ROOT/.control-token" && break
+            sleep 0.1
+          done
+          export TEST_CONTROL_TOKEN="$(node -p "JSON.parse(require('fs').readFileSync(process.env.BRIDGE_RUNTIME_ROOT + '/.control-token')).token")"
+          export TEST_REMOTE_TOKEN="$REMOTE_TOKEN"
+          npm run smoke:http || { cat "$RUNNER_TEMP/bridge-http-smoke.log"; exit 1; }
 
   # AudioTap and the desktop shell are Windows-only by construction.
   native:
     name: Native (Windows)
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - uses: actions/setup-dotnet@v4
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
         with:
-          dotnet-version: '9.0.x'
+          dotnet-version: '10.0.x'
 
       - name: Build AudioTap
         run: dotnet build native/AudioTap/AudioTap.csproj -c Release --nologo -warnaserror
@@ -104,9 +130,9 @@ jobs:
             nfpm-arch: arm64
             appimage-arch: aarch64
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           # The bot runs on 22.18+, but building single executables needs --build-sea (Node 26+).
           node-version: '26'
@@ -114,10 +140,10 @@ jobs:
 
       - run: npm ci
 
-      - uses: actions/setup-dotnet@v4
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
         if: runner.os == 'Windows'
         with:
-          dotnet-version: '9.0.x'
+          dotnet-version: '10.0.x'
 
       - name: Build AudioTap
         if: runner.os == 'Windows'
@@ -176,7 +202,7 @@ jobs:
             node -e "JSON.parse(require('fs').readFileSync('devices.json', 'utf8'))"
           fi
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: packages-${{ matrix.name }}
           path: dist/release/*
@@ -191,7 +217,7 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           pattern: packages-*
           path: dist/release

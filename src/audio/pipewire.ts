@@ -14,7 +14,7 @@ let availability: { value: boolean; expires: number } | undefined;
 let nodeCache: { value: PwNode[]; expires: number } | undefined;
 let nodeDump: Promise<PwNode[]> | undefined;
 
-interface PwNode {
+export interface PwNode {
   id: number;
   type: string;
   state?: string;
@@ -31,7 +31,9 @@ export function pipewireAvailable(): boolean {
     encoding: 'utf8',
     windowsHide: true,
   });
-  const dump = spawnSync(config.paths.pwDump, ['--version'], {
+  // Unlike pw-record, pw-dump does not consistently implement --version. --help is the portable,
+  // side-effect-free existence probe documented by PipeWire and does not require a live graph.
+  const dump = spawnSync(config.paths.pwDump, ['--help'], {
     encoding: 'utf8',
     windowsHide: true,
   });
@@ -74,9 +76,11 @@ async function run(command: string, args: string[], timeoutMs = 10_000): Promise
 async function dumpNodes(): Promise<PwNode[]> {
   if (nodeCache && nodeCache.expires > Date.now()) return nodeCache.value;
   if (nodeDump) return nodeDump;
-  nodeDump = run(config.paths.pwDump, ['Node']).then((raw) => {
-    const parsed = JSON.parse(raw) as PwNode[];
-    const value = Array.isArray(parsed) ? parsed : [];
+  // pw-dump does not accept an object type as a positional argument. `pw-dump Node` asks for a
+  // PipeWire remote literally named "Node", which normally fails and used to become an empty UI.
+  // Dump the graph and filter Node objects from the returned JSON ourselves.
+  nodeDump = run(config.paths.pwDump, []).then((raw) => {
+    const value = parsePipewireDump(raw);
     nodeCache = { value, expires: Date.now() + 1_000 };
     return value;
   });
@@ -85,6 +89,18 @@ async function dumpNodes(): Promise<PwNode[]> {
   } finally {
     nodeDump = undefined;
   }
+}
+
+export function parsePipewireDump(raw: string): PwNode[] {
+  const parsed = JSON.parse(raw) as unknown;
+  if (!Array.isArray(parsed)) throw new Error('pw-dump returned an invalid graph.');
+  return parsed.filter(
+    (entry): entry is PwNode =>
+      typeof entry === 'object' &&
+      entry !== null &&
+      typeof (entry as Partial<PwNode>).id === 'number' &&
+      String((entry as Partial<PwNode>).type ?? '').endsWith(':Node'),
+  );
 }
 
 /** The sink WirePlumber currently routes default playback to, by node name. */
@@ -109,21 +125,42 @@ async function defaultSinkName(): Promise<string | null> {
  */
 export async function listPipewireApps(): Promise<ProcessInfo[]> {
   const nodes = await dumpNodes();
+  return pipewireAppsFromNodes(nodes);
+}
+
+export function pipewireAppsFromNodes(nodes: readonly PwNode[]): ProcessInfo[] {
   return nodes
     .filter((node) => props(node)['media.class'] === 'Stream/Output/Audio')
     .filter((node) => !nodeName(node).startsWith('speech-dispatcher'))
     .map((node) => {
       const p = props(node);
-      const name = String(p['application.name'] ?? nodeName(node));
+      const name = String(
+        p['application.name'] ??
+          p['application.process.binary'] ??
+          p['application.id'] ??
+          nodeName(node),
+      );
       return {
         pid: node.id,
         name,
-        displayName: String(p['node.description'] ?? name),
+        displayName: String(p['node.description'] ?? p['media.name'] ?? name),
         state: nodeState(node) === 'running' ? 'Active' : 'Inactive',
         peak: 0,
         deviceId: '',
       } satisfies ProcessInfo;
     });
+}
+
+/** User-facing failure text shared by both control surfaces without leaking command internals. */
+export function pipewireDiscoveryError(error: unknown): string {
+  const message = error instanceof Error ? error.message : String(error);
+  if (/ENOENT|not found|could not start/i.test(message)) {
+    return 'PipeWire tools are missing. Install pipewire-bin, then restart Discord Audio Bridge.';
+  }
+  return (
+    'Could not query the desktop PipeWire session. Run the bridge as the signed-in desktop user ' +
+    'and run "discord-audio-bridge --doctor" for details.'
+  );
 }
 
 /** Output devices (sinks). Capturing one records its monitor — everything playing through it. */

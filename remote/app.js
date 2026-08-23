@@ -40,7 +40,7 @@ let consecutiveFailures = 0;
 let routeOptions = {
   platform: '',
   guilds: [],
-  sources: { processes: [], devices: [], dshow: [], audioTapBuilt: false },
+  sources: { processes: [], devices: [], dshow: [], audioTapBuilt: false, sourceError: null },
 };
 let selectedSource = null;
 let renderedSources = new Map();
@@ -223,7 +223,9 @@ function renderSources() {
   if (items.length === 0) {
     const empty = document.createElement('p');
     empty.className = 'route-hint';
-    empty.textContent = sourceFilter
+    empty.textContent = routeOptions.sources.sourceError
+      ? routeOptions.sources.sourceError
+      : sourceFilter
       ? `Nothing matches “${sourceFilter}”.`
       : 'Nothing to capture. Start playback on the host, then refresh.';
     container.append(empty);

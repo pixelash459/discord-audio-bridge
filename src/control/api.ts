@@ -7,6 +7,7 @@ import { logger } from '../logger.ts';
 import { collectReport, renderReport } from '../diagnostics.ts';
 import { listDshowDevices } from '../audio/encoder.ts';
 import { nowPlaying, nowPlayingSummary, sourceMonitor, type NowPlaying } from '../audio/monitor.ts';
+import { pipewireDiscoveryError } from '../audio/pipewire.ts';
 import { captureBackend, isAudioTapBuilt, listDevices, listProcesses } from '../audio/tap.ts';
 import {
   deletePreset,
@@ -411,16 +412,19 @@ export async function handleApi(client: Client, req: IncomingMessage, url: URL):
       return { guilds: guilds(client) };
 
     case 'GET /api/sources': {
+      let sourceError: string | null = null;
       const [processes, devices, dshow] = await Promise.all([
         isAudioTapBuilt()
           ? listProcesses().catch((error) => {
-              log.debug('process source enumeration failed', error);
+              log.warn('process source enumeration failed', error);
+              if (!IS_WINDOWS) sourceError = pipewireDiscoveryError(error);
               return [];
             })
           : Promise.resolve([]),
         isAudioTapBuilt()
           ? listDevices().catch((error) => {
-              log.debug('device source enumeration failed', error);
+              log.warn('device source enumeration failed', error);
+              if (!IS_WINDOWS) sourceError = pipewireDiscoveryError(error);
               return [];
             })
           : Promise.resolve([]),
@@ -429,7 +433,7 @@ export async function handleApi(client: Client, req: IncomingMessage, url: URL):
           return [];
         }),
       ]);
-      return { processes, devices, dshow, audioTapBuilt: isAudioTapBuilt() };
+      return { processes, devices, dshow, audioTapBuilt: isAudioTapBuilt(), sourceError };
     }
 
     case 'POST /api/stream': {

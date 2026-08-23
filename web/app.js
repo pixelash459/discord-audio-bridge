@@ -51,7 +51,7 @@ const ui = {
   filter: '',
   guildId: null,
   channelId: null,
-  sources: { processes: [], devices: [], dshow: [], audioTapBuilt: false },
+  sources: { processes: [], devices: [], dshow: [], audioTapBuilt: false, sourceError: null },
   guilds: [],
   presets: [],
   state: null,
@@ -338,7 +338,9 @@ function renderSources() {
   if (items.length === 0) {
     const empty = document.createElement('div');
     empty.className = 'empty';
-    empty.textContent = ui.filter
+    empty.textContent = ui.sources.sourceError
+      ? ui.sources.sourceError
+      : ui.filter
       ? `Nothing matches “${ui.filter}”.`
       : ui.sourceKind === 'process'
         ? 'No app is playing audio right now. Start playback and hit Refresh.'

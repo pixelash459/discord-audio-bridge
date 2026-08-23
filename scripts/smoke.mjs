@@ -133,6 +133,48 @@ for (const specifier of modules) {
   }
 }
 
+// pw-dump outputs the complete graph. Its positional argument is a remote instance name, not an
+// object type, so passing "Node" makes Linux enumeration connect to a nonexistent remote. Parse a
+// representative full graph and filter the playback stream in-process.
+{
+  const { parsePipewireDump, pipewireAppsFromNodes } = await import(
+    new URL('../src/audio/pipewire.ts', import.meta.url).href
+  );
+  const graph = JSON.stringify([
+    {
+      id: 41,
+      type: 'PipeWire:Interface:Client',
+      info: { props: { 'application.name': 'Firefox' } },
+    },
+    {
+      id: 42,
+      type: 'PipeWire:Interface:Node',
+      info: {
+        state: 'running',
+        props: {
+          'media.class': 'Stream/Output/Audio',
+          'application.name': 'Firefox',
+          'node.name': 'Firefox-YouTube',
+          'node.description': 'YouTube Audio',
+        },
+      },
+    },
+    {
+      id: 43,
+      type: 'PipeWire:Interface:Node',
+      info: { props: { 'media.class': 'Audio/Sink', 'node.name': 'alsa_output.test' } },
+    },
+  ]);
+  const nodes = parsePipewireDump(graph);
+  const apps = pipewireAppsFromNodes(nodes);
+  if (nodes.length !== 2 || apps.length !== 1 || apps[0]?.name !== 'Firefox' || apps[0]?.state !== 'Active') {
+    failed++;
+    process.stdout.write('  FAIL  full PipeWire graph yields browser playback sources\n');
+  } else {
+    process.stdout.write('  ok    full PipeWire graph yields browser playback sources\n');
+  }
+}
+
 // A real-time producer must be allowed to build the configured jitter reserve. The old Linux
 // pacer consumed each 20 ms frame as soon as it arrived, so it never actually primed outside the
 // synthetic all-at-once burst used by the pacing test later in this file.
@@ -169,12 +211,25 @@ for (const specifier of modules) {
 }
 
 const tapSource = await readFile(new URL('../src/audio/tap.ts', import.meta.url), 'utf8');
+const pipewireSource = await readFile(new URL('../src/audio/pipewire.ts', import.meta.url), 'utf8');
 const configSource = await readFile(new URL('../src/config.ts', import.meta.url), 'utf8');
 const envSource = await readFile(new URL('../src/control/envFile.ts', import.meta.url), 'utf8');
 const apiSource = await readFile(new URL('../src/control/api.ts', import.meta.url), 'utf8');
 const controlServerSource = await readFile(new URL('../src/control/server.ts', import.meta.url), 'utf8');
 const packageSource = await readFile(new URL('./package.mjs', import.meta.url), 'utf8');
 const workflowSource = await readFile(new URL('../.github/workflows/ci.yml', import.meta.url), 'utf8');
+
+if (
+  pipewireSource.includes("config.paths.pwDump, ['Node']") ||
+  pipewireSource.includes("config.paths.pwDump, ['--version']") ||
+  !pipewireSource.includes('config.paths.pwDump, []') ||
+  !pipewireSource.includes("config.paths.pwDump, ['--help']")
+) {
+  failed++;
+  process.stdout.write('  FAIL  PipeWire uses the portable pw-dump command contract\n');
+} else {
+  process.stdout.write('  ok    PipeWire uses the portable pw-dump command contract\n');
+}
 const desktopSource = await readFile(
   new URL('../packaging/io.github.ashutoshchaudhary_lgtm.discord-audio-bridge.desktop', import.meta.url),
   'utf8',

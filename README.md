@@ -464,7 +464,7 @@ SDK, install it or use a DirectShow source.
 
 **Per-app capture is unavailable (Linux).** Install the PipeWire tools with
 `apt install pipewire-bin` on Debian/Ubuntu or `dnf install pipewire-utils` on Fedora. Run as the
-desktop-session user, then confirm both `pw-record --version` and `pw-dump --version` work.
+desktop-session user, then confirm `pw-record --version` and `pw-dump --help` work.
 
 **Activation fails with `E_NOTIMPL` or `AUDCLNT_E_…` (Windows).** Per-process loopback needs
 Windows 10 version 2004 (build 19041) or newer — check with `winver`. Some virtualised and remote-desktop audio

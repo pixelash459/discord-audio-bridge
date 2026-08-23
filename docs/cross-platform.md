@@ -117,7 +117,7 @@ Then, as the logged-in desktop user (not through `sudo`):
 node --version                 # 22.18+ to run from source; 26+ to build packages
 ffmpeg -hide_banner -h encoder=libopus
 pw-record --version
-pw-dump --version
+pw-dump --help >/dev/null
 systemctl --user --no-pager status pipewire wireplumber
 ```
 
@@ -134,7 +134,7 @@ npm run doctor
 ```
 
 Start audio in a normal desktop application before running `doctor`. Its output should list at
-least one application stream and one render endpoint. If it does not, verify that `pw-dump Node`
+least one application stream and one render endpoint. If it does not, verify that `pw-dump`
 contains `Stream/Output/Audio` and `Audio/Sink` nodes in the same terminal session.
 
 ### 3. Validate Discord and both panels

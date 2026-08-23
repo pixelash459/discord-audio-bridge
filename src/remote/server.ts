@@ -13,6 +13,7 @@ import {
 
 import { listDshowDevices } from '../audio/encoder.ts';
 import { nowPlaying, nowPlayingSummary } from '../audio/monitor.ts';
+import { pipewireDiscoveryError } from '../audio/pipewire.ts';
 import { isAudioTapBuilt, listDevices, listProcesses } from '../audio/tap.ts';
 import { config, projectRoot, runtimeRoot } from '../config.ts';
 import { logger } from '../logger.ts';
@@ -123,16 +124,19 @@ function resolveBitrate(channel: VoiceBasedChannel, requested?: number): number 
 }
 
 async function remoteOptions(client: Client): Promise<unknown> {
+  let sourceError: string | null = null;
   const [processes, devices, dshow] = await Promise.all([
     isAudioTapBuilt()
       ? listProcesses().catch((error) => {
-          log.debug('remote process source enumeration failed', error);
+          log.warn('remote process source enumeration failed', error);
+          if (!IS_WINDOWS) sourceError = pipewireDiscoveryError(error);
           return [];
         })
       : Promise.resolve([]),
     isAudioTapBuilt()
       ? listDevices().catch((error) => {
-          log.debug('remote device source enumeration failed', error);
+          log.warn('remote device source enumeration failed', error);
+          if (!IS_WINDOWS) sourceError = pipewireDiscoveryError(error);
           return [];
         })
       : Promise.resolve([]),
@@ -172,7 +176,7 @@ async function remoteOptions(client: Client): Promise<unknown> {
           .sort((a, b) => a.name.localeCompare(b.name)),
       };
     }),
-    sources: { processes, devices, dshow, audioTapBuilt: isAudioTapBuilt() },
+    sources: { processes, devices, dshow, audioTapBuilt: isAudioTapBuilt(), sourceError },
   };
 }
 

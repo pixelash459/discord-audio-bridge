@@ -6,6 +6,8 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [1.4.0] - 2026-08-23
+
 ### Added
 
 - **Local monitoring.** A Monitor button on each live session plays the encoded stream back on the
@@ -25,6 +27,9 @@ All notable changes to this project are documented here. The format follows
 - Application icons now appear for sandboxed child processes. Browsers render audio from content
   processes whose executable path cannot be read, so the picker previously showed one `firefox` row
   with an icon beside identical rows without one.
+- Linux source discovery now invokes `pw-dump` with its real command-line contract, filters playback
+  nodes from the full PipeWire graph, and recognizes Firefox/Chromium streams. Enumeration failures
+  are shown in both control surfaces instead of being mislabeled as “no app is playing.”
 
 
 ## [1.3.1] - 2026-08-23
@@ -250,7 +255,8 @@ First release.
 - ffmpeg's Ogg muxer defaults to one-second pages, which starves the Discord player. This project
   sets `-page_duration 20000`; measured, that is 163 ms to first packet versus 3186 ms.
 
-[Unreleased]: https://github.com/AshutoshChaudhary-lgtm/discord-audio-bridge/compare/v1.3.1...HEAD
+[Unreleased]: https://github.com/AshutoshChaudhary-lgtm/discord-audio-bridge/compare/v1.4.0...HEAD
+[1.4.0]: https://github.com/AshutoshChaudhary-lgtm/discord-audio-bridge/compare/v1.3.1...v1.4.0
 [1.3.1]: https://github.com/AshutoshChaudhary-lgtm/discord-audio-bridge/compare/v1.3.0...v1.3.1
 [1.3.0]: https://github.com/AshutoshChaudhary-lgtm/discord-audio-bridge/compare/v1.2.1...v1.3.0
 [1.2.1]: https://github.com/AshutoshChaudhary-lgtm/discord-audio-bridge/compare/v1.2.0...v1.2.1

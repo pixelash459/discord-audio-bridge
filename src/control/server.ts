@@ -1,11 +1,12 @@
 import { randomBytes, timingSafeEqual } from 'node:crypto';
-import { chmodSync, createReadStream, existsSync, mkdirSync, writeFileSync } from 'node:fs';
+import { chmodSync, createReadStream, existsSync, mkdirSync, statSync, writeFileSync } from 'node:fs';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { dirname, extname, join, normalize, resolve, sep } from 'node:path';
 import { WebSocketServer, type WebSocket } from 'ws';
 import type { Client } from 'discord.js';
 
 import { projectRoot } from '../config.ts';
+import { restrictPrivateFile } from '../platform.ts';
 import {
   bearerToken,
   hardenServer,
@@ -22,7 +23,7 @@ import { handleApi, buildSnapshot, ApiError } from './api.ts';
 const log = logger('control');
 
 const webRoot = resolve(projectRoot, 'web');
-const SESSION_COOKIE = 'bridge_control_session';
+const WS_TICKET_TTL_MS = 30_000;
 // Written into the writable runtime root: the repo in development, the user state dir when
 // installed read-only under /usr/share or Program Files.
 
@@ -57,6 +58,7 @@ export class ControlServer {
     handleProtocols: (protocols) => (protocols.has('bridge-v1') ? 'bridge-v1' : false),
   });
   #clients = new Set<WebSocket>();
+  #wsTickets = new Map<string, number>();
   #requests = new RateLimiter();
   #client: Client;
   #onQuit: (() => void) | undefined;
@@ -128,6 +130,9 @@ export class ControlServer {
       { encoding: 'utf8', mode: 0o600 },
     );
     chmodSync(controlTokenPath, 0o600);
+    if (!restrictPrivateFile(controlTokenPath)) {
+      log.warn('could not restrict the control token ACL to the current Windows account');
+    }
 
     // One broadcast loop for every client: cheap, and keeps all panels in step.
     this.#timer = setInterval(() => void this.#broadcastState(), 500);
@@ -157,17 +162,12 @@ export class ControlServer {
   #authorizedWebSocket(req: IncomingMessage): boolean {
     const protocols = (req.headers['sec-websocket-protocol'] ?? '').split(',').map((value) => value.trim());
     const supplied = protocols.find((value) => value.startsWith('auth.'))?.slice(5) ?? '';
-    const actual = Buffer.from(this.token);
-    const candidate = Buffer.from(supplied);
-    const cookie = (req.headers.cookie ?? '')
-      .split(';')
-      .map((part) => part.trim())
-      .find((part) => part.startsWith(`${SESSION_COOKIE}=`))
-      ?.slice(SESSION_COOKIE.length + 1) ?? '';
-    const cookieValue = Buffer.from(cookie);
-    const protocolTokenValid = candidate.length === actual.length && timingSafeEqual(candidate, actual);
-    const cookieValid = cookieValue.length === actual.length && timingSafeEqual(cookieValue, actual);
-    return protocols.includes('bridge-v1') && (protocolTokenValid || cookieValid);
+    if (!protocols.includes('bridge-v1') || !supplied) return false;
+
+    const expires = this.#wsTickets.get(supplied);
+    // Tickets are single use: even the legitimate upgrade consumes one before its expiry check.
+    this.#wsTickets.delete(supplied);
+    return expires !== undefined && expires >= Date.now();
   }
 
   #attach(ws: WebSocket): void {
@@ -232,15 +232,17 @@ export class ControlServer {
 
       try {
         if (`${req.method} ${url.pathname}` === 'POST /api/session') {
-          // Browsers cannot set an Authorization header on WebSocket handshakes. Exchange the
-          // already-authenticated bearer token for an HttpOnly, same-origin session cookie rather
-          // than smuggling credentials through Sec-WebSocket-Protocol. The cookie expires with the
-          // browser session and becomes useless whenever the bridge restarts and rotates its token.
-          res.setHeader(
-            'set-cookie',
-            `${SESSION_COOKIE}=${this.token}; HttpOnly; SameSite=Strict; Path=/`,
-          );
-          return json(res, 200, { ok: true });
+          // Cookies are host-scoped, not port-scoped. Storing the control token in one would hand it
+          // to every unrelated HTTP service the browser visits on 127.0.0.1. Exchange the bearer
+          // credential for a random, single-use, short-lived WebSocket ticket instead.
+          const now = Date.now();
+          for (const [ticket, expires] of this.#wsTickets) {
+            if (expires < now) this.#wsTickets.delete(ticket);
+          }
+          const ticket = randomBytes(24).toString('base64url');
+          const expiresAt = now + WS_TICKET_TTL_MS;
+          this.#wsTickets.set(ticket, expiresAt);
+          return json(res, 200, { ticket, expiresAt });
         }
         if (`${req.method} ${url.pathname}` === 'POST /api/app/quit') {
           json(res, 200, { quitting: true });
@@ -253,7 +255,7 @@ export class ControlServer {
         const status = error instanceof ApiError ? error.status : 500;
         const message = error instanceof Error ? error.message : String(error);
         if (status >= 500) log.error(`${req.method} ${url.pathname} failed`, error);
-        return json(res, status, { error: message });
+        return json(res, status, { error: status >= 500 ? 'Internal control server error.' : message });
       }
     }
 
@@ -273,11 +275,11 @@ export class ControlServer {
       return;
     }
 
-    if (!existsSync(target)) {
+    if (!existsSync(target) || !statSync(target).isFile()) {
       log.warn('control panel asset not found', { pathname, target, webRoot });
       res
         .writeHead(404, securityHeaders('text/plain; charset=utf-8'))
-        .end(`Control panel asset not found: ${pathname}\nAsset root: ${webRoot}\n`);
+        .end(`Control panel asset not found: ${pathname}\n`);
       return;
     }
 

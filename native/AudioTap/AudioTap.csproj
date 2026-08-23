@@ -2,8 +2,14 @@
 
   <PropertyGroup>
     <OutputType>Exe</OutputType>
-    <!-- Windows-only by construction: WASAPI process loopback has no cross-platform equivalent. -->
-    <TargetFramework>net10.0-windows</TargetFramework>
+    <!-- Windows-only by construction: WASAPI process loopback has no cross-platform equivalent.
+         The explicit SDK version pulls in the Windows Runtime projections, which is what makes
+         Windows.Media.Control (the now-playing track) reachable from a plain console app. -->
+    <TargetFramework>net10.0-windows10.0.19041.0</TargetFramework>
+    <!-- Process loopback needs 19041, but device loopback and enumeration run on anything older.
+         Keeping the supported floor below the SDK version lets the binary start and print a clear
+         message on an old build instead of refusing to launch. -->
+    <SupportedOSPlatformVersion>10.0.17763.0</SupportedOSPlatformVersion>
     <!-- Run on newer supported .NET runtimes too; release packages remain self-contained. -->
     <RollForward>LatestMajor</RollForward>
     <Nullable>enable</Nullable>
@@ -22,6 +28,10 @@
          WithProcessLoopback(), i.e. ActivateAudioInterfaceAsync +
          AUDIOCLIENT_PROCESS_LOOPBACK_PARAMS. Pinned because it is prerelease. -->
     <PackageReference Include="NAudio.Wasapi" Version="3.0.2-preview.1" />
+    <!-- Only for Icon.ExtractAssociatedIcon and PNG encoding in AppIcons: the source picker shows
+         each application's own icon, which is the difference between recognising a row and reading
+         it. Windows-only, which this project already is. -->
+    <PackageReference Include="System.Drawing.Common" Version="10.0.0" />
   </ItemGroup>
 
 </Project>

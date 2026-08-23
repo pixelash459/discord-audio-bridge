@@ -29,6 +29,9 @@
   <url type="homepage">https://github.com/AshutoshChaudhary-lgtm/discord-audio-bridge</url>
   <url type="bugtracker">https://github.com/AshutoshChaudhary-lgtm/discord-audio-bridge/issues</url>
   <releases>
+    <release version="1.3.0" date="2026-08-23">
+      <description><p>Adds multi-source mixing, presets, loudness processing, live media presence, upgraded local/remote controls, and substantial security hardening.</p></description>
+    </release>
     <release version="1.2.1" date="2026-08-23">
       <description>
         <p>Prevents a failed WebSocket handshake from blocking the UI by using a browser session cookie and authenticated HTTP fallback.</p>

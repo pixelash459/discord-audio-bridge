@@ -30,10 +30,19 @@
           <p id="bot-identity" class="muted">connecting…</p>
         </div>
       </div>
-      <div class="topbar-status">
-        <span id="bot-dot" class="dot"></span>
-        <span id="bot-state">offline</span>
-        <span id="bot-ping" class="pill" hidden></span>
+      <div class="topbar-right">
+        <div id="host-track" class="host-track" hidden>
+          <img id="host-art" class="host-art" alt="" src="data:image/gif;base64,R0lGODlhAQABAAAAACH5BAEKAAEALAAAAAABAAEAAAICTAEAOw==" hidden />
+          <div class="host-track-text">
+            <span class="label">Playing on this PC</span>
+            <strong id="host-track-title">—</strong>
+          </div>
+        </div>
+        <div class="topbar-status">
+          <span id="bot-dot" class="dot"></span>
+          <span id="bot-state">offline</span>
+          <span id="bot-ping" class="pill" hidden></span>
+        </div>
       </div>
     </header>
 
@@ -46,9 +55,9 @@
     </div>
 
     <nav class="tabs" role="tablist" aria-label="Application sections">
-      <button class="tab active" type="button" role="tab" aria-selected="true" aria-controls="panel-stream" data-tab="stream">Stream</button>
-      <button class="tab" type="button" role="tab" aria-selected="false" aria-controls="panel-setup" tabindex="-1" data-tab="setup">Setup</button>
-      <button class="tab" type="button" role="tab" aria-selected="false" aria-controls="panel-logs" tabindex="-1" data-tab="logs">Logs</button>
+      <button class="tab active" type="button" role="tab" aria-selected="true" aria-controls="panel-stream" data-tab="stream">Stream <kbd>1</kbd></button>
+      <button class="tab" type="button" role="tab" aria-selected="false" aria-controls="panel-setup" tabindex="-1" data-tab="setup">Setup <kbd>2</kbd></button>
+      <button class="tab" type="button" role="tab" aria-selected="false" aria-controls="panel-logs" tabindex="-1" data-tab="logs">Logs <kbd>3</kbd></button>
     </nav>
 
     <main id="main-content">
@@ -56,75 +65,13 @@
       <section id="panel-stream" class="panel active" role="tabpanel" data-panel="stream">
         <div class="page-intro">
           <div><p class="eyebrow">Audio route</p><h2>Choose where it goes, then what to play</h2></div>
-          <p>Your selection stays local until you press Start. You can change it without leaving Discord.</p>
+          <p>Your selection stays local until you press Start. Press <kbd>M</kbd> to mute, <kbd>S</kbd> to stop, <kbd>/</kbd> to search sources.</p>
         </div>
+
+        <!-- One card per live session. The bot can stream to several servers at once. -->
+        <div id="sessions" class="sessions"></div>
+
         <div class="grid">
-          <!-- Live session -->
-          <article id="live-card" class="card span-2" hidden>
-            <header class="card-head">
-              <h2>Now streaming</h2>
-              <div class="button-row">
-                <button id="mute-btn" class="btn ghost" type="button">Mute bot</button>
-                <button id="stop-btn" class="btn danger" type="button">Stop</button>
-              </div>
-            </header>
-
-            <div class="live-summary">
-              <div>
-                <span class="label">Source</span>
-                <strong id="live-source">—</strong>
-              </div>
-              <div>
-                <span class="label">Channel</span>
-                <strong id="live-channel">—</strong>
-              </div>
-              <div>
-                <span class="label">Capture</span>
-                <strong id="live-format">—</strong>
-              </div>
-              <div>
-                <span class="label">Uptime</span>
-                <strong id="live-uptime">—</strong>
-              </div>
-            </div>
-
-            <div class="meters">
-              <div class="meter-row">
-                <span class="meter-label">L</span>
-                <div class="meter"><div class="meter-fill" id="meter-l"></div><div class="meter-peak" id="peak-l"></div></div>
-                <span class="meter-db" id="db-l">−∞</span>
-              </div>
-              <div class="meter-row">
-                <span class="meter-label">R</span>
-                <div class="meter"><div class="meter-fill" id="meter-r"></div><div class="meter-peak" id="peak-r"></div></div>
-                <span class="meter-db" id="db-r">−∞</span>
-              </div>
-            </div>
-
-            <div id="live-warning" class="notice warn" hidden></div>
-
-            <div class="stats-grid">
-              <div><span class="label">Bitrate</span><strong id="stat-bitrate">—</strong></div>
-              <div><span class="label">Discord mute</span><strong id="stat-muted">—</strong></div>
-              <div><span class="label">UDP ping</span><strong id="stat-ping">—</strong></div>
-              <div><span class="label">Jitter buffer</span><strong id="stat-buffer">—</strong></div>
-              <div><span class="label">Silence filled</span><strong id="stat-padded">—</strong></div>
-              <div><span class="label">Drift trimmed</span><strong id="stat-trim">—</strong></div>
-              <div><span class="label">Player</span><strong id="stat-player">—</strong></div>
-            </div>
-
-            <div class="controls">
-              <label class="control">
-                <span class="label">Gain <span id="gain-value">0.0 dB</span></span>
-                <input id="gain" type="range" min="-60" max="20" step="0.5" value="0" />
-              </label>
-              <label class="control">
-                <span class="label">Opus bitrate <span id="bitrate-value">—</span></span>
-                <input id="bitrate" type="range" min="32" max="384" step="8" value="96" />
-              </label>
-            </div>
-          </article>
-
           <!-- Destination -->
           <article class="card step-card">
             <header class="card-head"><div class="step-heading"><span class="step-number">1</span><div><p class="eyebrow">Destination</p><h2>Pick a voice room</h2></div></div></header>
@@ -138,6 +85,10 @@
             </label>
             <div id="channel-hint" class="notice info" hidden></div>
             <button id="maximize-btn" class="btn ghost" type="button" hidden>Raise channel to server maximum</button>
+            <div id="no-guilds" class="notice info" hidden>
+              The bot is not in a server yet.
+              <a id="invite-link" class="link" href="#" target="_blank" rel="noreferrer" hidden>Invite it to one →</a>
+            </div>
           </article>
 
           <!-- Source -->
@@ -159,11 +110,39 @@
             </div>
 
             <p id="source-hint" class="muted small"></p>
-            <div id="source-list" class="source-list"></div>
+
+            <div class="source-toolbar">
+              <input
+                id="source-filter"
+                class="filter"
+                type="search"
+                placeholder="Filter sources…"
+                aria-label="Filter sources"
+                autocomplete="off"
+              />
+              <label class="checkbox">
+                <input id="mix-toggle" type="checkbox" />
+                <span>Mix several</span>
+              </label>
+            </div>
+
+            <div id="source-list" class="source-list" role="group" aria-label="Capture sources"></div>
+            <p id="mix-hint" class="muted small" hidden>Pick up to four apps or devices. They are summed before encoding.</p>
+
             <div class="card-actions">
               <button id="refresh-btn" class="btn ghost small" type="button">Refresh sources</button>
               <button id="start-btn" class="btn primary" type="button" disabled>Choose a source</button>
             </div>
+          </article>
+
+          <!-- Saved routes -->
+          <article class="card span-2">
+            <header class="card-head">
+              <div><p class="eyebrow">Shortcuts</p><h2>Saved routes</h2></div>
+              <button id="save-route-btn" class="btn ghost small" type="button" disabled>Save current route</button>
+            </header>
+            <p class="muted small">A route is a source, a destination, a bitrate and a gain. Saving one turns four clicks into one.</p>
+            <div id="preset-list" class="preset-list"></div>
           </article>
         </div>
       </section>
@@ -176,7 +155,10 @@
         </div>
         <div class="grid">
           <article class="card span-2">
-            <header class="card-head"><h2>Discord credentials</h2></header>
+            <header class="card-head">
+              <h2>Discord credentials</h2>
+              <a id="invite-btn" class="btn ghost small" href="#" target="_blank" rel="noreferrer" hidden>Invite the bot</a>
+            </header>
             <p class="muted small">
               From
               <a href="https://discord.com/developers/applications" target="_blank" rel="noreferrer"
@@ -202,6 +184,14 @@
           <article class="card">
             <header class="card-head"><h2>Audio defaults</h2></header>
             <label class="field">
+              <span class="label">Loudness handling</span>
+              <select id="cfg-AUDIO_LOUDNESS">
+                <option value="limit">limit — true-peak limiter (recommended)</option>
+                <option value="match">match — normalise every source to one level</option>
+                <option value="off">off — send exactly what the app produces</option>
+              </select>
+            </label>
+            <label class="field">
               <span class="label">VBR mode</span>
               <select id="cfg-OPUS_VBR">
                 <option value="on">on — unconstrained, best quality</option>
@@ -224,44 +214,99 @@
           </article>
 
           <article class="card">
-            <header class="card-head"><h2>Advanced system settings</h2></header>
+            <header class="card-head"><h2>Presence &amp; automation</h2></header>
             <label class="field">
-              <span class="label">ffmpeg</span>
-              <input id="cfg-FFMPEG_PATH" type="text" placeholder="ffmpeg" />
-            </label>
-            <label class="field">
-              <span class="label">AudioTap.exe</span>
-              <input id="cfg-AUDIOTAP_PATH" type="text" placeholder="native/AudioTap/bin/AudioTap.exe" />
-            </label>
-            <label class="field">
-              <span class="label">Log level</span>
-              <select id="cfg-LOG_LEVEL">
-                <option value="error">error</option>
-                <option value="warn">warn</option>
-                <option value="info">info</option>
-                <option value="debug">debug</option>
+              <span class="label">Bot activity</span>
+              <select id="cfg-PRESENCE_ACTIVITY">
+                <option value="true">show “Listening to …”</option>
+                <option value="false">off</option>
               </select>
             </label>
             <label class="field">
-              <span class="label">Log file</span>
-              <input id="cfg-LOG_FILE" type="text" placeholder="logs/bridge.log (or off)" />
+              <span class="label">Voice channel status</span>
+              <select id="cfg-PRESENCE_CHANNEL_STATUS">
+                <option value="true">show the track on the channel</option>
+                <option value="false">off</option>
+              </select>
             </label>
             <label class="field">
-              <span class="label">Remote bind address</span>
-              <input id="cfg-REMOTE_HOST" type="text" placeholder="0.0.0.0" />
+              <span class="label">Read the host's now-playing track</span>
+              <select id="cfg-PRESENCE_NOW_PLAYING">
+                <option value="true">yes — use Windows media info</option>
+                <option value="false">no</option>
+              </select>
             </label>
             <label class="field">
-              <span class="label">Remote control port</span>
-              <input id="cfg-REMOTE_PORT" type="number" min="0" max="65535" placeholder="8788" />
+              <span class="label">Stop after this long with no listeners <span class="muted">(0 = never)</span></span>
+              <input id="cfg-AUTO_LEAVE_SECONDS" type="number" min="0" max="86400" step="30" />
             </label>
             <label class="field">
-              <span class="label">Trust Tailscale devices</span>
-              <select id="cfg-REMOTE_TRUST_TAILSCALE">
-                <option value="true">yes — no extra token on Tailscale</option>
-                <option value="false">no — always require token</option>
+              <span class="label">Resume the last route on start</span>
+              <select id="cfg-AUTO_RESUME">
+                <option value="false">no</option>
+                <option value="true">yes</option>
               </select>
             </label>
           </article>
+
+          <details class="card span-2 advanced">
+            <summary><h2>Advanced system settings</h2><span class="muted small">Paths, logging, and network access</span></summary>
+            <div class="two-up">
+              <label class="field">
+                <span class="label">ffmpeg</span>
+                <input id="cfg-FFMPEG_PATH" type="text" placeholder="ffmpeg" />
+              </label>
+              <label class="field">
+                <span class="label">AudioTap.exe</span>
+                <input id="cfg-AUDIOTAP_PATH" type="text" placeholder="native/AudioTap/bin/AudioTap.exe" />
+              </label>
+            </div>
+            <div class="two-up">
+              <label class="field">
+                <span class="label">Loudness target (LUFS)</span>
+                <input id="cfg-AUDIO_TARGET_LUFS" type="number" min="-40" max="-5" />
+              </label>
+              <label class="field">
+                <span class="label">True-peak ceiling (dBTP)</span>
+                <input id="cfg-AUDIO_TRUE_PEAK_DB" type="number" min="-9" max="0" />
+              </label>
+            </div>
+            <div class="two-up">
+              <label class="field">
+                <span class="label">Log level</span>
+                <select id="cfg-LOG_LEVEL">
+                  <option value="info">info</option>
+                  <option value="error">error</option>
+                  <option value="warn">warn</option>
+                  <option value="debug">debug</option>
+                </select>
+              </label>
+              <label class="field">
+                <span class="label">Log file</span>
+                <input id="cfg-LOG_FILE" type="text" placeholder="logs/bridge.log (or off)" />
+              </label>
+            </div>
+            <div class="notice warn">
+              Remote access is off by default. Enabling a non-zero port exposes it on the selected interface; prefer a private Tailscale connection.
+            </div>
+            <div class="two-up">
+              <label class="field">
+                <span class="label">Remote bind address</span>
+                <input id="cfg-REMOTE_HOST" type="text" placeholder="127.0.0.1" />
+              </label>
+              <label class="field">
+                <span class="label">Remote control port <span class="muted">(0 = off)</span></span>
+                <input id="cfg-REMOTE_PORT" type="number" min="0" max="65535" placeholder="0" />
+              </label>
+            </div>
+            <label class="field">
+              <span class="label">Trust Tailscale devices</span>
+              <select id="cfg-REMOTE_TRUST_TAILSCALE">
+                <option value="false">no — always require token</option>
+                <option value="true">yes — no extra token on Tailscale</option>
+              </select>
+            </label>
+          </details>
 
           <article class="card span-2">
             <header class="card-head"><h2>Remote control</h2></header>
@@ -279,9 +324,10 @@
               <button id="build-btn" class="btn" type="button">Build AudioTap</button>
               <button id="register-btn" class="btn" type="button">Register slash commands</button>
               <button id="diag-btn" class="btn ghost" type="button">Run diagnostics</button>
+              <button id="diag-copy" class="btn ghost" type="button" hidden>Copy report</button>
               <button id="quit-btn" class="btn ghost" type="button">Quit app</button>
             </div>
-            <pre id="diag-output" class="output" hidden></pre>
+            <div id="diag-list" class="check-list" hidden></div>
           </article>
         </div>
       </section>
@@ -296,22 +342,120 @@
           <header class="card-head">
             <h2>Log</h2>
             <div class="button-row">
-              <select id="log-filter">
+              <input id="log-search" class="filter" type="search" placeholder="Search…" aria-label="Search the log" autocomplete="off" />
+              <select id="log-filter" aria-label="Minimum log level">
                 <option value="debug">all</option>
                 <option value="info" selected>info and above</option>
                 <option value="warn">warnings and errors</option>
                 <option value="error">errors only</option>
               </select>
+              <button id="log-jump" class="btn ghost small" type="button" title="Jump to the most recent problem">Last problem</button>
+              <button id="log-copy" class="btn ghost small" type="button">Copy</button>
+              <button id="log-download" class="btn ghost small" type="button">Download</button>
               <button id="log-clear" class="btn ghost small" type="button">Clear</button>
             </div>
           </header>
           <p id="log-file-hint" class="muted">Loading persistent log location…</p>
-          <div id="log" class="log"></div>
+          <div id="log" class="log" tabindex="0" role="log" aria-label="Bridge log"></div>
         </article>
       </section>
     </main>
 
     <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
+
+    <!-- Cloned once per live session. Keeps the markup for a stream in one place. -->
+    <template id="session-template">
+      <article class="card session-card">
+        <header class="card-head">
+          <div class="session-title">
+            <img class="session-art" alt="" src="data:image/gif;base64,R0lGODlhAQABAAAAACH5BAEKAAEALAAAAAABAAEAAAICTAEAOw==" hidden />
+            <div>
+              <h2 class="session-source">—</h2>
+              <p class="session-sub muted">—</p>
+            </div>
+          </div>
+          <div class="button-row">
+            <span class="pill listeners" hidden></span>
+            <button class="btn ghost mute-btn" type="button">Mute bot</button>
+            <button class="btn danger stop-btn" type="button">Stop</button>
+          </div>
+        </header>
+
+        <div class="alerts">
+          <div class="notice warn quality-note" hidden></div>
+          <div class="notice warn silent-note" hidden>
+            No sound has reached the bridge for a while. Is the right app selected, and is it playing?
+          </div>
+          <div class="notice error clip-note" hidden>
+            The signal is clipping. Lower the gain, or switch loudness handling to “limit”.
+          </div>
+        </div>
+
+        <div class="meters">
+          <div class="meter-scale" aria-hidden="true">
+            <span>-60</span><span>-40</span><span>-20</span><span>-12</span><span>-6</span><span>0</span>
+          </div>
+          <div class="meter-row">
+            <span class="meter-label">L</span>
+            <div class="meter" role="meter" aria-label="Left channel level" aria-valuemin="-60" aria-valuemax="0" aria-valuenow="-60">
+              <div class="meter-fill meter-l"></div><div class="meter-peak peak-l"></div>
+            </div>
+            <span class="meter-db db-l">−∞</span>
+          </div>
+          <div class="meter-row">
+            <span class="meter-label">R</span>
+            <div class="meter" role="meter" aria-label="Right channel level" aria-valuemin="-60" aria-valuemax="0" aria-valuenow="-60">
+              <div class="meter-fill meter-r"></div><div class="meter-peak peak-r"></div>
+            </div>
+            <span class="meter-db db-r">−∞</span>
+          </div>
+        </div>
+
+        <div class="live-summary">
+          <div><span class="label">Channel</span><strong class="live-channel">—</strong></div>
+          <div><span class="label">Capture</span><strong class="live-format">—</strong></div>
+          <div><span class="label">Uptime</span><strong class="live-uptime">—</strong></div>
+          <div><span class="label">State</span><strong class="stat-player">—</strong></div>
+        </div>
+
+        <div class="trend">
+          <canvas class="trend-canvas" width="600" height="48" aria-hidden="true"></canvas>
+          <span class="trend-legend muted small">jitter buffer · UDP ping · last 60s</span>
+        </div>
+
+        <div class="stats-grid">
+          <div><span class="label">Bitrate</span><strong class="stat-bitrate">—</strong></div>
+          <div><span class="label">Discord mute</span><strong class="stat-muted">—</strong></div>
+          <div><span class="label">UDP ping</span><strong class="stat-ping">—</strong></div>
+          <div><span class="label">Jitter buffer</span><strong class="stat-buffer">—</strong></div>
+          <div><span class="label">Silence filled</span><strong class="stat-padded">—</strong></div>
+          <div><span class="label">Drift trimmed</span><strong class="stat-trim">—</strong></div>
+          <div><span class="label">Overruns</span><strong class="stat-dropped">—</strong></div>
+          <div><span class="label">Restarts</span><strong class="stat-restarts">—</strong></div>
+        </div>
+
+        <div class="mix-inputs" hidden></div>
+
+        <div class="controls">
+          <label class="control">
+            <span class="label">Gain <span class="gain-value">0.0 dB</span></span>
+            <input class="gain" type="range" min="-60" max="20" step="0.5" value="0" />
+          </label>
+          <label class="control">
+            <span class="label">Opus bitrate <span class="bitrate-value">—</span></span>
+            <input class="bitrate" type="range" min="8" max="384" step="8" value="96" />
+          </label>
+          <label class="control">
+            <span class="label">Loudness</span>
+            <select class="loudness">
+              <option value="limit">limit</option>
+              <option value="match">match</option>
+              <option value="off">off</option>
+            </select>
+          </label>
+        </div>
+      </article>
+    </template>
 
     <script type="module" src="/app.js"></script>
   </body>

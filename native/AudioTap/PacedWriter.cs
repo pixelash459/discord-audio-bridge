@@ -91,7 +91,9 @@ internal sealed class PacedWriter : IDisposable
                 dropped += discard;
             }
 
-            var writable = Math.Min(data.Length, ring.Length - fill);
+            // Only whole frames enter the ring. A partial write would rotate the channel/sample
+            // boundary for every later frame until the buffer drained completely.
+            var writable = Math.Min(Align(data.Length), Align(ring.Length - fill));
             var tail = (head + fill) % ring.Length;
             var firstChunk = Math.Min(writable, ring.Length - tail);
             data[..firstChunk].CopyTo(ring.AsSpan(tail));
@@ -99,6 +101,7 @@ internal sealed class PacedWriter : IDisposable
                 data.Slice(firstChunk, writable - firstChunk).CopyTo(ring.AsSpan(0));
 
             fill += writable;
+            dropped += data.Length - writable;
         }
     }
 
@@ -136,8 +139,8 @@ internal sealed class PacedWriter : IDisposable
                 }
 
                 emitted += owed;
-                written += owed;
-                padded += owed - taken;
+                Interlocked.Add(ref written, owed);
+                Interlocked.Add(ref padded, owed - taken);
 
                 // Sleep until the next tick is due. Because `due` is derived from an absolute
                 // Stopwatch reading, an overslept tick costs burstiness but never drift.
@@ -210,8 +213,8 @@ internal sealed class PacedWriter : IDisposable
             return new Stats(
                 BufferMs: Math.Round(fill * 1000.0 / bytesPerSecond, 1),
                 TargetMs: Math.Round(targetBytes * 1000.0 / bytesPerSecond, 1),
-                StreamedMs: Math.Round(written * 1000.0 / bytesPerSecond, 1),
-                PaddedMs: Math.Round(padded * 1000.0 / bytesPerSecond, 1),
+                StreamedMs: Math.Round(Interlocked.Read(ref written) * 1000.0 / bytesPerSecond, 1),
+                PaddedMs: Math.Round(Interlocked.Read(ref padded) * 1000.0 / bytesPerSecond, 1),
                 DroppedMs: Math.Round(dropped * 1000.0 / bytesPerSecond, 1),
                 TrimmedMs: Math.Round(trimmed * 1000.0 / bytesPerSecond, 1),
                 Primed: primed);

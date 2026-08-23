@@ -7,6 +7,7 @@ import type { Readable } from 'node:stream';
 import { config, DISCORD_AUDIO } from '../config.ts';
 import { logger } from '../logger.ts';
 import { IS_LINUX, IS_WINDOWS } from '../platform.ts';
+import { sourceMonitor } from './monitor.ts';
 import {
   closeAllPipedTaps,
   listPipewireApps,
@@ -93,6 +94,26 @@ export interface ProcessInfo {
   state: 'Active' | 'Inactive' | 'Expired' | string;
   peak: number;
   deviceId: string;
+  /** Base64 PNG of the executable's icon, when the helper could extract one. */
+  icon?: string;
+}
+
+/**
+ * Finds the current process for a source that was chosen by name.
+ *
+ * A PID identifies a run of an application, not the application. When Spotify restarts, the session
+ * the user actually asked for is still "Spotify" - so a restart re-resolves the name rather than
+ * spending its whole retry budget reconnecting to a process that no longer exists. Prefers a
+ * process that is actively rendering audio, since that is the one making the sound.
+ */
+export async function resolveProcessByName(name: string): Promise<ProcessInfo | undefined> {
+  const wanted = name.trim().toLowerCase();
+  if (!wanted) return undefined;
+
+  const candidates = (await listProcesses()).filter(
+    (process) => process.name.toLowerCase() === wanted || process.displayName.toLowerCase() === wanted,
+  );
+  return candidates.find((process) => process.state === 'Active') ?? candidates[0];
 }
 
 export class AudioTapUnavailableError extends Error {
@@ -119,8 +140,11 @@ function run(args: string[], timeoutMs = 15_000): Promise<string> {
     const child = spawn(config.paths.audioTap, args, { windowsHide: true });
     captureChildren.add(child);
     child.once('close', () => captureChildren.delete(child));
+    child.stdin.on('error', (error) => log.debug('AudioTap control pipe closed', error));
     let stdout = '';
     let stderr = '';
+    let oversized = false;
+    const maxOutput = 16 * 1024 * 1024;
 
     const timer = setTimeout(() => {
       child.kill();
@@ -129,9 +153,18 @@ function run(args: string[], timeoutMs = 15_000): Promise<string> {
     }, timeoutMs);
 
     child.stdout.setEncoding('utf8');
-    child.stdout.on('data', (chunk: string) => (stdout += chunk));
+    child.stdout.on('data', (chunk: string) => {
+      if (stdout.length + chunk.length > maxOutput) {
+        oversized = true;
+        child.kill();
+        return;
+      }
+      stdout += chunk;
+    });
     child.stderr.setEncoding('utf8');
-    child.stderr.on('data', (chunk: string) => (stderr += chunk));
+    child.stderr.on('data', (chunk: string) => {
+      if (stderr.length < 64 * 1024) stderr += chunk.slice(0, 64 * 1024 - stderr.length);
+    });
 
     child.on('error', (error) => {
       clearTimeout(timer);
@@ -142,7 +175,9 @@ function run(args: string[], timeoutMs = 15_000): Promise<string> {
     child.on('close', (code) => {
       clearTimeout(timer);
       const details = { args, code, durationMs: Math.round(performance.now() - started) };
-      if (code === 0) {
+      if (oversized) {
+        reject(new Error(`AudioTap ${args.join(' ')} produced more than 16 MiB of output.`));
+      } else if (code === 0) {
         log.debug('AudioTap command completed', details);
         resolve(stdout);
       } else {
@@ -165,6 +200,7 @@ export class PipeWireUnavailableError extends Error {
 
 /** Final shutdown backstop for any capture child that lost its owning session reference. */
 export async function closeAllTaps(): Promise<void> {
+  sourceMonitor.stop();
   const children = [...captureChildren];
   if (children.length > 0) {
     log.warn('cleaning up remaining AudioTap processes', { count: children.length });
@@ -186,6 +222,11 @@ export async function closeAllTaps(): Promise<void> {
 }
 
 export async function listProcesses(): Promise<ProcessInfo[]> {
+  // The resident monitor already holds a list that is at most a second or two old and was pushed
+  // rather than polled. When it is running there is nothing to spawn and nothing to wait for.
+  const live = sourceMonitor.processes;
+  if (live) return live;
+
   if (processCache && processCache.expires > Date.now()) return processCache.value;
   if (processListing) return processListing;
   processListing = (
@@ -202,6 +243,9 @@ export async function listProcesses(): Promise<ProcessInfo[]> {
 }
 
 export async function listDevices(): Promise<DeviceInfo[]> {
+  const live = sourceMonitor.devices;
+  if (live) return live;
+
   if (deviceCache && deviceCache.expires > Date.now()) return deviceCache.value;
   if (deviceListing) return deviceListing;
   deviceListing = (
@@ -292,6 +336,7 @@ export class Tap implements CaptureTap {
     const child = spawn(config.paths.audioTap, args, { windowsHide: true });
     captureChildren.add(child);
     child.once('close', () => captureChildren.delete(child));
+    child.stdin.on('error', (error) => log.debug('AudioTap control pipe closed', error));
     log.debug('AudioTap process spawned', { pid: child.pid });
 
     // stdout is binary PCM, so every diagnostic comes back on stderr as one JSON object per line.
@@ -299,6 +344,7 @@ export class Tap implements CaptureTap {
     let tap: Tap | undefined;
     let format: RawFormat | undefined;
     let rejectStart: ((error: Error) => void) | undefined;
+    let resolveStart: ((format: RawFormat) => void) | undefined;
 
     events.on('line', (line) => {
       let parsed: { event: string; data: Record<string, unknown> };
@@ -312,6 +358,7 @@ export class Tap implements CaptureTap {
       switch (parsed.event) {
         case 'format':
           format = parsed.data as unknown as RawFormat;
+          resolveStart?.(format);
           break;
         case 'stats':
           if (tap) tap.#stats = parsed.data as unknown as TapStats;
@@ -329,27 +376,24 @@ export class Tap implements CaptureTap {
 
     // Resolve once the tap reports its negotiated format, which happens before any PCM flows.
     const started = new Promise<RawFormat>((resolve, reject) => {
-      rejectStart = reject;
-      let timer: NodeJS.Timeout;
-      const check = setInterval(() => {
-        if (format) {
-          clearInterval(check);
-          clearTimeout(timer);
-          resolve(format);
-        }
-      }, 10);
-      timer = setTimeout(() => {
-        clearInterval(check);
+      const timer = setTimeout(() => {
         child.kill();
         reject(new Error('AudioTap did not report a capture format within 10s'));
       }, 10_000);
+      resolveStart = (value) => {
+        clearTimeout(timer);
+        resolve(value);
+      };
+      rejectStart = (error) => {
+        clearTimeout(timer);
+        reject(error);
+      };
+      if (format) resolveStart(format);
       child.once('close', (code) => {
-        clearInterval(check);
         clearTimeout(timer);
         if (!format) reject(new Error(`AudioTap exited ${code} before reporting a format`));
       });
       child.once('error', (error) => {
-        clearInterval(check);
         clearTimeout(timer);
         reject(error);
       });
@@ -365,6 +409,7 @@ export class Tap implements CaptureTap {
       throw error;
     }
     rejectStart = undefined;
+    resolveStart = undefined;
     log.info('capture started', { pid: child.pid, ...negotiated });
 
     tap = new Tap(child, negotiated);
@@ -376,7 +421,7 @@ export class Tap implements CaptureTap {
   }
 
   setGain(db: number): void {
-    if (this.#closed) return;
+    if (this.#closed || this.#child.exitCode !== null || this.#child.stdin.destroyed) return;
     log.info('updating AudioTap gain', { pid: this.#child.pid, db });
     this.#child.stdin.write(`gain ${db}\n`);
   }

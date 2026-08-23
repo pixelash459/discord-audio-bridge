@@ -140,8 +140,9 @@ Match what is already there. A few things that are deliberate:
 - **`src/audio/pacer.ts`.** This is the Linux counterpart: preserve complete channel frames,
   priming, real-time pacing, silence fill, and backpressure recovery.
 - **`src/control/`.** It listens on a socket and can rewrite `.env`. Keep it bound to 127.0.0.1,
-  keep Bearer/session-cookie authentication plus origin/Host checks on every protected route,
-  and never return the bot token to a client.
+  keep Bearer authentication plus single-use WebSocket tickets and origin/Host checks on every
+  protected route, and never return the bot token to a client. Never put a credential in a
+  localhost cookie: browser cookies do not distinguish ports.
 - **`src/remote/` and `remote/`.** This surface intentionally binds to the network. Keep its API
   restricted to runtime streaming controls, verify tokenless tailnet peers through the Tailscale
   daemon, and treat source enumeration as host information.

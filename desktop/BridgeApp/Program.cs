@@ -63,7 +63,8 @@ internal static class Program
 
         // The bot is disposed after the message loop ends, which stops it only if we started it.
         using var bot = new BotProcess(projectRoot);
-        Application.Run(new MainForm(bot));
+        var startMinimized = args.Any(a => a.Equals("--minimized", StringComparison.OrdinalIgnoreCase));
+        Application.Run(new MainForm(bot, startMinimized));
         AppLog.Info("desktop launcher stopped");
     }
 }

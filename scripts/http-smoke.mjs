@@ -29,10 +29,10 @@ result = await request(`${controlBase}/api/session`, {
   body: '{}',
 });
 assert.equal(result.response.status, 200);
-const sessionCookie = result.response.headers.get('set-cookie')?.split(';')[0];
-assert.match(sessionCookie ?? '', /^bridge_control_session=[A-Za-z0-9_-]{32}$/);
-assert.match(result.response.headers.get('set-cookie') ?? '', /HttpOnly/i);
-assert.match(result.response.headers.get('set-cookie') ?? '', /SameSite=Strict/i);
+assert.equal(result.response.headers.get('set-cookie'), null, 'control credentials must never enter a localhost cookie');
+const { ticket, expiresAt } = JSON.parse(result.text);
+assert.match(ticket, /^[A-Za-z0-9_-]{32}$/);
+assert.ok(expiresAt > Date.now());
 
 result = await request(`${controlBase}/api/state`, {
   headers: { authorization: `Bearer ${controlToken}`, origin: 'http://evil.invalid' },
@@ -63,11 +63,13 @@ assert.equal(
 );
 
 const websocketBase = controlBase.replace(/^http/, 'ws');
+// The durable control token is never accepted in a WebSocket handshake; only the short-lived,
+// single-use ticket returned above is.
 await new Promise((resolve, reject) => {
-  const socket = new WebSocket(`${websocketBase}/ws`, ['bridge-v1'], {
-    headers: { cookie: sessionCookie, origin: controlBase },
+  const socket = new WebSocket(`${websocketBase}/ws`, ['bridge-v1', `auth.${ticket}`], {
+    headers: { origin: controlBase },
   });
-  const timer = setTimeout(() => reject(new Error('WebSocket timed out.')), 3_000);
+  const timer = setTimeout(() => reject(new Error('Ticket WebSocket timed out.')), 3_000);
   socket.once('message', () => {
     clearTimeout(timer);
     socket.close();
@@ -76,16 +78,4 @@ await new Promise((resolve, reject) => {
   socket.once('error', reject);
 });
 
-// Keep the previous protocol-token handshake valid for already-open 1.2.0 pages during upgrades.
-await new Promise((resolve, reject) => {
-  const socket = new WebSocket(`${websocketBase}/ws`, ['bridge-v1', `auth.${controlToken}`]);
-  const timer = setTimeout(() => reject(new Error('Legacy WebSocket timed out.')), 3_000);
-  socket.once('message', () => {
-    clearTimeout(timer);
-    socket.close();
-    resolve();
-  });
-  socket.once('error', reject);
-});
-
-console.log('live HTTP/session-cookie/WebSocket security integration passed');
+console.log('live HTTP/single-use-ticket/WebSocket security integration passed');

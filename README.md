@@ -1,6 +1,6 @@
 # discord-audio-bridge
 
-Stream audio from **one specific application** — Windows or Linux — into a Discord voice channel,
+Stream audio from **one application, device, or live mix** — Windows or Linux — into Discord voice channels,
 with the signal path kept as short and as lossless as Discord permits.
 
 [![CI](https://github.com/AshutoshChaudhary-lgtm/discord-audio-bridge/actions/workflows/ci.yml/badge.svg)](https://github.com/AshutoshChaudhary-lgtm/discord-audio-bridge/actions/workflows/ci.yml)
@@ -12,7 +12,7 @@ No virtual audio cable. No "Stereo Mix". Pick an app, pick a channel, and its au
 
 The full control panel runs in any modern browser; Windows development checkouts can also wrap it
 in a small WebView2 desktop shell. Slash commands cover streaming and diagnostics, while a separate
-restricted dashboard provides source, destination, mute, gain, bitrate, and stop controls from a
+restricted, installable dashboard provides source, destination, mute, gain, bitrate, and stop controls from a
 phone or another device on the LAN or a personal Tailscale network.
 
 ```text
@@ -190,10 +190,10 @@ wrapper is Windows-only.
 4. Paste both into the panel's **Setup** tab and press Save. The panel starts before sign-in
    precisely so this works on a fresh clone; saving a token signs in immediately, with no restart.
    (Editing `.env` by hand does the same job.)
-5. **Installation** → *Guild Install*, scopes `bot` + `applications.commands`, permissions
-   **Connect** and **Speak**. Add **Manage Channels** if the bot should raise channel bitrate, and
-   **Mute Members** if it should automatically become a speaker in Stage channels.
-6. Open the generated install link and add the bot to your server.
+5. Use the **Invite bot** link generated in Setup. It requests `bot` + `applications.commands` and
+   the permissions used by streaming, Stage speaking, bitrate changes, messages, and voice-channel
+   status. You do not need to calculate a permission integer manually.
+6. Open that install link and add the bot to your server.
 7. Press **Register slash commands** in the Setup tab.
 
 No privileged intents are needed. Set `DISCORD_GUILD_ID` while developing so commands appear
@@ -209,15 +209,19 @@ page in a native WebView2 window.
 
 **Stream** — first pick a server and voice channel, then choose an application, output device, or
 (on Windows) DirectShow input. The app list shows processes that currently hold an audio session,
-with a pulse next to active ones. Nothing changes in Discord until **Start stream** (or **Apply
+with native application icons and a pulse next to active ones. Enable mixing to select up to four
+compatible application/device sources and trim each input separately. Nothing changes in Discord until **Start stream** (or **Apply
 route**) is pressed, so exploring the list cannot accidentally retarget a live stream.
 
 Once running you get stereo peak/RMS meters, the negotiated capture format, UDP ping, jitter-buffer
-fill, silence-fill and drift-trim counters, plus live mute, gain, bitrate, and stop controls. The
+fill, silence-fill and drift-trim counters, clipping/silence warnings, Windows media metadata, plus
+live mute, per-input/master gain, loudness, bitrate, and stop controls. Up to four guild sessions
+can run concurrently, and routes can be named as reusable presets. The
 destination card can also raise a voice channel to the server's bitrate ceiling when the bot has
 **Manage Channels**.
 
-**Setup** — credentials, audio defaults, paths, logging, and remote-control settings, written to the
+**Setup** — credentials, audio/loudness defaults, presence, automation, paths, logging, and
+remote-control settings, written to the
 writable runtime `.env` (the checkout root during development, the per-user state directory for a
 read-only package). It can build AudioTap on Windows, register slash commands directly with Discord,
 and run diagnostics. Settings that only apply at startup are marked as requiring a restart; use
@@ -230,17 +234,20 @@ to `logs/desktop.log` in a development checkout. Credentials are redacted before
 
 ### Remote control
 
-The bot also serves a separate, restricted dashboard on port `8788`. It is intended for a phone or
-another computer on the same LAN or Tailscale network. At startup, the terminal prints one URL for
+The separate remote dashboard is disabled on fresh installs. To opt in, set `REMOTE_PORT=8788` and
+bind `REMOTE_HOST` to a trusted interface (or `0.0.0.0` for all IPv4 interfaces). It is intended for
+a phone or another computer on the same LAN or Tailscale network. At startup, the terminal prints one URL for
 each local network address; open the appropriate URL on the other device. With trust enabled, the
 server asks the local Tailscale daemon to identify each `100.x`/tailnet peer with `tailscale whois`
 before allowing tokenless control—an address merely being in the CGNAT range is not enough. LAN URLs
 carry a persistent access token from `.remote-token` in the URL fragment; the page moves it into a
-Bearer header and removes it from the address bar.
+Bearer header, removes it from the address bar, and retains it for the installed PWA until **Forget
+this device** is pressed.
 
 The remote dashboard can select a capture source and Discord server/voice-channel destination,
 start or retarget a stream, mute/unmute the bot in Discord, stop it, and adjust gain and Opus
-bitrate. It cannot read or edit the Discord token, change setup, build helpers, or register commands.
+bitrate. It also shows live meters, mix trims, media artwork, and lock-screen mute/stop actions where
+Media Session is supported. It cannot read or edit the Discord token, change setup, build helpers, or register commands.
 Treat a LAN tokenized URL like a password. Plain LAN HTTP is not encrypted against a network
 observer, so prefer Tailscale when possible. Set `REMOTE_PORT=0` to disable the network listener,
 bind `REMOTE_HOST` to one interface, or set `REMOTE_TRUST_TAILSCALE=false` to require the app token
@@ -250,9 +257,10 @@ Windows may show a firewall prompt for Node on first use. Allow private networks
 open the URL containing the host's `100.x.y.z` address. If an inbound firewall rule is needed, add
 one for TCP port 8788 on private networks from an elevated Windows Terminal.
 
-On Windows, the optional desktop window closes to the notification area; quit from its tray icon to
-stop the bot it launched. If `npm start` is already serving the local control port, `npm run app`
-attaches to that process instead of starting another one.
+On Windows, the optional desktop window closes to the notification area. Its tray icon reflects
+offline/idle/live/muted state, its menu exposes mute and stop, `Ctrl+Alt+M` / `Ctrl+Alt+S` work
+globally, and Start with Windows is opt-in. Quit from the tray to stop the bot it launched. If
+`npm start` already serves the local port, `npm run app` attaches instead of starting another bot.
 
 ### Security
 
@@ -260,7 +268,7 @@ The panel binds to `127.0.0.1` only and is never reachable from the network. Bec
 is not authentication, every API call and WebSocket upgrade also requires a token minted at startup
 and written to `.control-token`. Access tokens arrive in URL fragments (not HTTP request URLs), are
 removed from the address bar, and are sent as Bearer credentials. The local panel exchanges its
-credential for an HttpOnly, same-origin browser-session cookie before opening the WebSocket and
+credential for a random, single-use, 30-second WebSocket ticket (never a localhost cookie) and
 falls back to authenticated HTTP polling if live updates cannot connect. Both web services enforce
 origin/Host checks, conservative HTTP limits, security headers, input size/type
 validation, and rate limits. The bot token is write-only over the API—reads report only whether one
@@ -276,10 +284,14 @@ is set. Set `CONTROL_PORT=0` to disable the panel entirely. See [SECURITY.md](SE
 | `/stop` | Stop and leave. |
 | `/status` | Live pipeline numbers. |
 | `/gain <db>` | Adjust capture gain. Applied live, no restart. |
+| `/loudness <mode>` | Switch between off, true-peak limiting, and loudness matching. |
 | `/bitrate [kbps]` | Re-encode at a different bitrate. Empty = match the channel. |
 | `/quality [maximize]` | Show the channel's bitrate and the server's ceiling; optionally raise it. |
 | `/sources` | List capturable apps and output devices, plus DirectShow inputs on Windows. |
 | `/diagnose` | Full dependency report. |
+
+Commands ship as administrator-only and enforce the same check at runtime, including autocomplete
+and message controls.
 
 ---
 
@@ -306,8 +318,8 @@ At 96 kbps you are hearing Discord's cap rather than anything this project contr
 Advanced. That way the audio engine resamples once, from the source material's rate, rather than
 44.1 → 48 → 44.1 → 48.
 
-**Leave gain at 0 dB** unless the source is genuinely quiet. Positive gain on float samples cannot
-clip in the tap, but it will clip in the encoder.
+**Leave gain at 0 dB** unless the source is genuinely quiet. The default `limit` mode adds true-peak
+protection; `match` additionally targets consistent EBU R128 loudness and uses more CPU.
 
 **Watch the meters.** "Silence filled" climbing while music plays means the tap is starving — raise
 `CAPTURE_BUFFER_MS`. Overruns above zero mean the pacing thread is being starved of CPU.
@@ -370,18 +382,26 @@ runtime root, so it has only one `.env`.
 | `OPUS_VBR` | `on` | `on` = unconstrained VBR, best quality. `constrained` bounds peaks. `off` = CBR. |
 | `OPUS_COMPLEXITY` | `10` | Encoder effort, 0–10. |
 | `CAPTURE_BUFFER_MS` | `120` | Jitter buffer target. Higher is more robust, and adds latency 1:1. |
+| `AUDIO_LOUDNESS` | `limit` | `off`, true-peak `limit`, or EBU R128 `match`. |
+| `AUDIO_TARGET_LUFS` | `-14` | Integrated target used by `match`. |
+| `AUDIO_TRUE_PEAK_DB` | `-1` | True-peak ceiling used by limit/match. |
+| `PRESENCE_ACTIVITY` | `true` | Show the source/track in bot activity. |
+| `PRESENCE_CHANNEL_STATUS` | `true` | Set the voice-channel status while streaming. |
+| `PRESENCE_NOW_PLAYING` | `true` | Read Windows media metadata/artwork. |
+| `AUTO_LEAVE_SECONDS` | `0` | Stop after this long without human listeners; `0` disables. |
+| `AUTO_RESUME` | `false` | Restore the last successful route after sign-in. |
 | `CONTROL_PORT` | `8787` | Control panel port, loopback only. `0` disables it. |
 | `CONTROL_OPEN` | `false` | Open the panel in your browser at startup. |
-| `REMOTE_HOST` | `0.0.0.0` | Bind address for the restricted remote dashboard. The default covers LAN and Tailscale IPv4. |
-| `REMOTE_PORT` | `8788` | Remote dashboard port. `0` disables remote access. |
-| `REMOTE_TRUST_TAILSCALE` | `true` | Allow tokenless peers only after `tailscale whois --json` verifies their tailnet identity. |
+| `REMOTE_HOST` | `127.0.0.1` | Bind address; choose a trusted interface or `0.0.0.0` when enabling remote access. |
+| `REMOTE_PORT` | `0` | Remote dashboard port. Set `8788` (or another port) to opt in. |
+| `REMOTE_TRUST_TAILSCALE` | `false` | Opt in to tokenless peers after `tailscale whois --json` verifies tailnet membership. |
 | `REMOTE_TOKEN` | generated | Optional fixed 24–256 character token-safe secret; normally use `.remote-token` generated by the app. |
 | `FFMPEG_PATH` | `ffmpeg` | |
 | `AUDIOTAP_PATH` | auto | Windows capture helper. |
 | `PWRECORD_PATH` | `pw-record` | Linux capture tool. |
 | `PWDUMP_PATH` | `pw-dump` | Linux source enumeration. |
 | `LOG_LEVEL` | `info` | `debug` prints the exact ffmpeg command line and every tap event. |
-| `LOG_FILE` | `logs/bridge.log` | Persistent JSON-lines log. Relative paths start at the writable runtime root; `off` disables it. Rotates after 10 MiB on startup. |
+| `LOG_FILE` | `logs/bridge.log` | Asynchronous JSON-lines log inside the runtime root; `off` disables it. Rotates continuously at 10 MiB. |
 
 ## How it is put together
 
@@ -411,6 +431,8 @@ packaging/           deb/rpm/AppImage metadata, desktop entry, and the icon.
 ```text
 AudioTap --list-processes            # JSON: apps holding a render session
 AudioTap --list-devices              # JSON: active render endpoints
+AudioTap --now-playing               # JSON: current Windows media session
+AudioTap --monitor --with-icons      # resident JSON event feed on stdout
 AudioTap --capture --pid 1234        # per-process loopback
 AudioTap --capture --pid 1234 --exclude
 AudioTap --capture --device default  # endpoint loopback
@@ -461,12 +483,13 @@ the network.
 permission on that specific channel. Stage channels additionally need **Mute Members** so the bot
 can unsuppress itself and become a speaker.
 
-**Several AudioTap or `pw-record` processes keep appearing.** The bridge retries a failed capture
+**Several AudioTap or `pw-record` processes keep appearing.** One resident AudioTap monitor plus one
+AudioTap/`pw-record` capture per active mix input is expected. The bridge retries a failed capture
 with bounded backoff and gives up after five attempts unless the pipeline remains healthy for 30
 seconds. Current capture children are tracked and stopped during stream replacement and shutdown.
-Overlapping source refreshes also share a short-lived enumeration result instead of spawning duplicate
-helpers. If an older build left helpers behind, stop those once, then upgrade; 1.2.0 and later prevent the
-churn and orphaning paths that caused this.
+Source refreshes use the resident monitor on Windows and coalesced enumeration on Linux. Counts that
+keep growing while no routes change indicate a crash loop; inspect Logs/Diagnostics rather than
+ending helpers manually.
 
 **`No compatible encryption modes`, or close code 4017.** Discord requires DAVE end-to-end
 encryption for voice calls; clients without it are disconnected with 4017.

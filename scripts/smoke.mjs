@@ -9,6 +9,7 @@
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { parseEnv } from 'node:util';
 
 process.env.DISCORD_TOKEN ||= 'smoke-test-placeholder';
 process.env.DISCORD_APP_ID ||= '0';
@@ -26,6 +27,8 @@ const modules = [
   '../src/platform.ts',
   '../src/commands.ts',
   '../src/audio/tap.ts',
+  '../src/audio/monitor.ts',
+  '../src/audio/mixer.ts',
   '../src/audio/pacer.ts',
   '../src/audio/pipewire.ts',
   '../src/audio/encoder.ts',
@@ -37,6 +40,9 @@ const modules = [
   '../src/remote/server.ts',
   '../src/registration.ts',
   '../src/doctor.ts',
+  '../src/diagnostics.ts',
+  '../src/presence.ts',
+  '../src/presets.ts',
 ];
 
 let failed = 0;
@@ -167,6 +173,7 @@ const envSource = await readFile(new URL('../src/control/envFile.ts', import.met
 const apiSource = await readFile(new URL('../src/control/api.ts', import.meta.url), 'utf8');
 const controlServerSource = await readFile(new URL('../src/control/server.ts', import.meta.url), 'utf8');
 const packageSource = await readFile(new URL('./package.mjs', import.meta.url), 'utf8');
+const workflowSource = await readFile(new URL('../.github/workflows/ci.yml', import.meta.url), 'utf8');
 const desktopSource = await readFile(
   new URL('../packaging/io.github.ashutoshchaudhary_lgtm.discord-audio-bridge.desktop', import.meta.url),
   'utf8',
@@ -182,6 +189,9 @@ if (
   !packageSource.includes('`overrides:`') ||
   !packageSource.includes("join(appDir, 'discord-audio-bridge.png')") ||
   !packageSource.includes('BRIDGE_RUNTIME_ROOT=') ||
+  !packageSource.includes("process.env['APPIMAGE_RUNTIME_PATH']") ||
+  !workflowSource.includes('sha256sum --check --strict') ||
+  workflowSource.includes('AppImageKit/releases/download/continuous') ||
   !packageSource.includes("'Exec=/usr/bin/discord-audio-bridge --open'") ||
   !packageSource.includes('/usr/share/applications/io.github.ashutoshchaudhary_lgtm.discord-audio-bridge.desktop') ||
   !packageSource.includes('/usr/share/metainfo/io.github.ashutoshchaudhary_lgtm.discord-audio-bridge.appdata.xml') ||
@@ -304,24 +314,72 @@ if (webApp.includes("if (state.capabilities?.platform === 'linux')")) {
   process.stdout.write('  ok    source renderer uses snapshot state safely\n');
 }
 
-if (!/becameReady[\s\S]*if \(becameReady\) void loadGuilds\(\)/.test(webApp)) {
+// Check the behaviour, not its formatting: the guard may load more than the guild list.
+if (!/if \(becameReady\)[\s\S]{0,160}loadGuilds\(\)/.test(webApp)) {
   failed++;
   process.stdout.write('  FAIL  web guild refresh on bot readiness\n');
 } else {
   process.stdout.write('  ok    web guild refresh on bot readiness\n');
 }
 
+// Several guilds can stream at once. The panel used to render only the first, silently hiding
+// every other session; the card template plus a per-guild map is what keeps that honest.
+if (
+  !webPage.includes('id="session-template"') ||
+  !webApp.includes('function renderSessions(') ||
+  !/cards\.set\(guildId/.test(webApp)
+) {
+  failed++;
+  process.stdout.write('  FAIL  panel renders every live session\n');
+} else {
+  process.stdout.write('  ok    panel renders every live session\n');
+}
+
+// clipping/silent/droppedMs were computed by the capture helper and thrown away by the UI.
+for (const field of ['clipping', 'silent', 'droppedMs']) {
+  if (!webApp.includes(field)) {
+    failed++;
+    process.stdout.write(`  FAIL  panel surfaces tap.${field}\n`);
+  } else {
+    process.stdout.write(`  ok    panel surfaces tap.${field}\n`);
+  }
+}
+
+// Source discovery should be push-driven; a spawn-per-tick poll is the thing being replaced.
+if (/setInterval\([\s\S]{0,200}loadSources\(\)[\s\S]{0,40}\}, 10_000\)/.test(webApp)) {
+  failed++;
+  process.stdout.write('  FAIL  source list is no longer polled every 10s\n');
+} else {
+  process.stdout.write('  ok    source list is no longer polled every 10s\n');
+}
+
 if (
   !controlServerSource.includes('POST /api/session') ||
-  !controlServerSource.includes('bridge_control_session') ||
+  controlServerSource.includes('bridge_control_session') ||
+  !controlServerSource.includes('WS_TICKET_TTL_MS') ||
   !webApp.includes("await post('session')") ||
+  !webApp.includes('`auth.${ticket}`') ||
   !webApp.includes('startPolling()') ||
-  !webApp.includes("new WebSocket(`${protocol}//${location.host}/ws`, ['bridge-v1'])")
+  !webApp.includes("new WebSocket(`${protocol}//${location.host}/ws`, ['bridge-v1', `auth.${ticket}`])")
 ) {
   failed++;
   process.stdout.write('  FAIL  browser-compatible control connection fallback\n');
 } else {
   process.stdout.write('  ok    browser-compatible control connection fallback\n');
+}
+
+// .env persistence must round-trip Windows paths through node:util parseEnv. JSON string escaping
+// turns a path segment such as \nice into a newline on the next launch.
+{
+  const { serializeEnvValue } = await import(new URL('../src/control/envFile.ts', import.meta.url).href);
+  const samples = ['C:\\ffmpeg\\nice\\bin\\ffmpeg.exe', 'x"y', 'plain value'];
+  const roundTrips = samples.every((value) => parseEnv(`X=${serializeEnvValue(value)}`).X === value);
+  if (!roundTrips) {
+    failed++;
+    process.stdout.write('  FAIL  .env values round-trip through parseEnv\n');
+  } else {
+    process.stdout.write('  ok    .env values round-trip through parseEnv\n');
+  }
 }
 
 if (webApp.includes("addEventListener('pointerup', commit)")) {
@@ -366,6 +424,21 @@ if (
   process.stdout.write('  FAIL  remote source/destination controls\n');
 } else {
   process.stdout.write('  ok    remote source/destination controls\n');
+}
+
+// Album art can be hundreds of kilobytes. Snapshots arrive twice a second and contain one object
+// per guild, so they must carry metadata only and fetch the image once when the track changes.
+if (
+  !apiSource.includes('nowPlaying: nowPlayingSummary()') ||
+  !remoteServer.includes('nowPlaying: nowPlayingSummary()') ||
+  !remoteServer.includes("GET /api/now-playing") ||
+  !webApp.includes("api('now-playing')") ||
+  !remoteApp.includes("api('now-playing')")
+) {
+  failed++;
+  process.stdout.write('  FAIL  artwork is loaded once per track outside status snapshots\n');
+} else {
+  process.stdout.write('  ok    artwork is loaded once per track outside status snapshots\n');
 }
 
 if (remoteApp.includes("querySelector('output')")) {

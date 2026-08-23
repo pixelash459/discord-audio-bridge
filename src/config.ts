@@ -1,6 +1,6 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { isIP } from 'node:net';
-import { dirname, join, resolve } from 'node:path';
+import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { parseEnv } from 'node:util';
 
 import { IS_LINUX, isWritable, userStateDir } from './platform.ts';
@@ -119,7 +119,7 @@ function safePath(name: string, fallback: string): string {
 }
 
 function remoteHost(): string {
-  const host = optional('REMOTE_HOST') ?? '0.0.0.0';
+  const host = optional('REMOTE_HOST') ?? '127.0.0.1';
   const hostname = /^(?=.{1,253}$)(?!-)[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*$/;
   if (isIP(host) === 0 && !hostname.test(host)) throw new Error(`REMOTE_HOST is invalid: "${host}"`);
   return host;
@@ -127,6 +127,23 @@ function remoteHost(): string {
 
 const vbrModes = ['off', 'on', 'constrained'] as const;
 export type VbrMode = (typeof vbrModes)[number];
+
+/**
+ * Loudness handling, in increasing order of intervention.
+ *
+ * `limit` is the sane default: a true-peak limiter costs one filter and makes the +20 dB end of the
+ * gain range safe. `match` adds single-pass EBU R128 normalisation so a quiet video and a loud game
+ * arrive at the same perceived level - useful, but it upsamples to 192 kHz internally for true-peak
+ * detection, so it is opt-in rather than automatic.
+ */
+const loudnessModes = ['off', 'limit', 'match'] as const;
+export type LoudnessMode = (typeof loudnessModes)[number];
+
+function loudness(): LoudnessMode {
+  const raw = (optional('AUDIO_LOUDNESS') ?? 'limit') as LoudnessMode;
+  if (!loudnessModes.includes(raw)) throw new Error(`AUDIO_LOUDNESS must be one of ${loudnessModes.join(' | ')}`);
+  return raw;
+}
 
 function vbr(): VbrMode {
   const raw = (optional('OPUS_VBR') ?? 'on') as VbrMode;
@@ -151,8 +168,14 @@ function logFile(): string | undefined {
   if (raw && (raw.length > 4_096 || /[\0\r\n]/.test(raw))) {
     throw new Error('LOG_FILE contains invalid characters.');
   }
-  // Relative to the runtime root, so a read-only install still logs into the user's state dir.
-  return resolve(runtimeRoot, raw ?? join('logs', 'bridge.log'));
+  // Keep logs inside the writable runtime root. Besides making packaged installs predictable, this
+  // prevents the control panel's LOG_FILE setting from becoming an arbitrary-file append target.
+  const target = resolve(runtimeRoot, raw ?? join('logs', 'bridge.log'));
+  const inside = relative(runtimeRoot, target);
+  if (inside === '..' || inside.startsWith(`..${sep}`) || isAbsolute(inside)) {
+    throw new Error('LOG_FILE must stay inside the writable runtime directory.');
+  }
+  return target;
 }
 
 function logLevel(): LogLevel {
@@ -184,6 +207,31 @@ export const config = {
   capture: {
     bufferMs: integer('CAPTURE_BUFFER_MS', 120, 20, 2_000),
   },
+  audio: {
+    /** off | limit (true-peak limiter only) | match (limiter + EBU R128 normalisation). */
+    loudness: loudness(),
+    /** Integrated loudness target in LUFS, used only when loudness is "match". */
+    targetLufs: integer('AUDIO_TARGET_LUFS', -14, -40, -5),
+    /** True-peak ceiling in dBTP for both the limiter and the normaliser. */
+    truePeakDb: integer('AUDIO_TRUE_PEAK_DB', -1, -9, 0),
+  },
+  presence: {
+    /** Set the bot's "Listening to ..." activity from the live source or track. */
+    activity: boolean('PRESENCE_ACTIVITY', true),
+    /**
+     * Write the live source into the voice channel's status line. Needs the Set Voice Channel
+     * Status permission, which is not in most default invite URLs - the panel builds a correct one.
+     */
+    channelStatus: boolean('PRESENCE_CHANNEL_STATUS', true),
+    /** Poll the Windows media session for track metadata (AudioTap --now-playing). */
+    nowPlaying: boolean('PRESENCE_NOW_PLAYING', true),
+  },
+  automation: {
+    /** Stop and disconnect after this many seconds alone in a channel. 0 disables. */
+    leaveWhenEmptySeconds: integer('AUTO_LEAVE_SECONDS', 0, 0, 86_400),
+    /** Restore the last route on startup once the bot signs in. */
+    resumeLastRoute: boolean('AUTO_RESUME', false),
+  },
   control: {
     /** Loopback-only control panel. Set CONTROL_PORT=0 to disable it entirely. */
     port: integer('CONTROL_PORT', 8787, 0, 65_535),
@@ -191,11 +239,11 @@ export const config = {
   },
   remote: {
     /** Network-facing runtime controls only. Set REMOTE_PORT=0 to disable. */
-    port: integer('REMOTE_PORT', 8788, 0, 65_535),
+    port: integer('REMOTE_PORT', 0, 0, 65_535),
     host: remoteHost(),
     token: optional('REMOTE_TOKEN'),
     /** Personal tailnets can use Tailscale's device authentication instead of another URL token. */
-    trustTailscale: boolean('REMOTE_TRUST_TAILSCALE', true),
+    trustTailscale: boolean('REMOTE_TRUST_TAILSCALE', false),
   },
   paths: {
     ffmpeg: safePath('FFMPEG_PATH', 'ffmpeg'),

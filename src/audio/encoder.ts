@@ -3,7 +3,7 @@ import { once } from 'node:events';
 import { createInterface } from 'node:readline';
 import type { Readable } from 'node:stream';
 
-import { config, DISCORD_AUDIO } from '../config.ts';
+import { config, DISCORD_AUDIO, type LoudnessMode } from '../config.ts';
 import { logger } from '../logger.ts';
 import { IS_WINDOWS } from '../platform.ts';
 import type { RawFormat } from './tap.ts';
@@ -29,11 +29,42 @@ export interface EncoderOptions {
   complexity?: number;
   /** Only applied for inputs the tap cannot pre-scale (i.e. dshow). */
   gainDb?: number;
+  /** Overrides the configured default; the panel can switch this per session. */
+  loudness?: LoudnessMode;
 }
 
 export interface DshowDevice {
   name: string;
   alternativeName?: string;
+}
+
+/**
+ * Loudness stage, inserted last so it sees the final 48 kHz stereo signal.
+ *
+ * `limit` is a true-peak limiter and nothing else. It exists because the gain control goes to
+ * +20 dB and float samples that arrive above 0 dBFS would otherwise reach libopus and clip audibly
+ * on decode. Auto-levelling is switched off so the limiter only ever attenuates peaks - it must not
+ * quietly change the mix.
+ *
+ * `match` adds single-pass EBU R128 normalisation on top, which is the right filter for a live
+ * source: `dynaudnorm` works frame-locally and pumps, and targets no standard at all. loudnorm's
+ * true-peak detector runs at 192 kHz internally, so an explicit high-quality resampler follows it
+ * rather than letting ffmpeg insert a default one.
+ */
+function loudnessFilters(mode: LoudnessMode): string[] {
+  if (mode === 'off') return [];
+
+  const ceiling = config.audio.truePeakDb;
+  if (mode === 'limit') {
+    // alimiter takes a linear amplitude, not dB.
+    const limit = Math.pow(10, ceiling / 20).toFixed(4);
+    return [`alimiter=limit=${limit}:level=disabled:attack=5:release=50`];
+  }
+
+  return [
+    `loudnorm=I=${config.audio.targetLufs}:TP=${ceiling}:LRA=11`,
+    `aresample=resampler=soxr:precision=28:osf=fltp:osr=${DISCORD_AUDIO.sampleRate}`,
+  ];
 }
 
 /**
@@ -102,6 +133,7 @@ export function buildArgs(options: EncoderOptions): string[] {
   if (options.gainDb) {
     filters.push(`volume=${options.gainDb}dB`);
   }
+  filters.push(...loudnessFilters(options.loudness ?? config.audio.loudness));
   if (filters.length > 0) args.push('-af', filters.join(','));
 
   args.push(
@@ -214,7 +246,9 @@ export async function probeDshowFormat(name: string): Promise<DshowFormat | null
 
   let stderr = '';
   child.stderr.setEncoding('utf8');
-  child.stderr.on('data', (chunk: string) => (stderr += chunk));
+  child.stderr.on('data', (chunk: string) => {
+    if (stderr.length < 1024 * 1024) stderr += chunk.slice(0, 1024 * 1024 - stderr.length);
+  });
 
   // ffmpeg being missing entirely fires 'error' without ever closing; both paths must resolve.
   await new Promise<void>((resolve) => {
@@ -301,7 +335,9 @@ async function enumerateDshowDevices(): Promise<DshowDevice[]> {
 
   let stderr = '';
   child.stderr.setEncoding('utf8');
-  child.stderr.on('data', (chunk: string) => (stderr += chunk));
+  child.stderr.on('data', (chunk: string) => {
+    if (stderr.length < 1024 * 1024) stderr += chunk.slice(0, 1024 * 1024 - stderr.length);
+  });
 
   // This invocation always "fails"; the listing is the point. A missing ffmpeg fires 'error'
   // without closing, so both events resolve.

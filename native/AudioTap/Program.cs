@@ -41,7 +41,9 @@ internal static class Program
             return options.Mode switch
             {
                 Mode.ListDevices => Print(Enumerate.Devices()),
-                Mode.ListProcesses => Print(Enumerate.Processes()),
+                Mode.ListProcesses => Print(Enumerate.Processes(options.WithIcons)),
+                Mode.NowPlaying => PrintTrack(),
+                Mode.Monitor => Monitor.Run(options),
                 _ => Capture(options),
             };
         }
@@ -55,6 +57,14 @@ internal static class Program
     private static int Print<T>(List<T> items)
     {
         Console.Out.WriteLine(JsonSerializer.Serialize(items, Enumerate.Json));
+        return 0;
+    }
+
+    /// <summary>Prints the current system media track, or `null` when nothing is playing.</summary>
+    private static int PrintTrack()
+    {
+        var track = NowPlaying.ReadAsync().GetAwaiter().GetResult();
+        Console.Out.WriteLine(JsonSerializer.Serialize(track, Enumerate.Json));
         return 0;
     }
 
@@ -116,7 +126,8 @@ internal static class Program
                 return;
             }
 
-            if (!isFloat || Math.Abs(gain - 1f) < 1e-6f)
+            var currentGain = Volatile.Read(ref gain);
+            if (!isFloat || Math.Abs(currentGain - 1f) < 1e-6f)
             {
                 meter.Add(buffer, isFloat);
                 pacer.Enqueue(buffer);
@@ -129,7 +140,7 @@ internal static class Program
                 buffer.CopyTo(scratch);
                 var samples = System.Runtime.InteropServices.MemoryMarshal
                     .Cast<byte, float>(scratch.AsSpan(0, buffer.Length));
-                for (var i = 0; i < samples.Length; i++) samples[i] *= gain;
+                for (var i = 0; i < samples.Length; i++) samples[i] *= currentGain;
                 meter.Add(scratch.AsSpan(0, buffer.Length), isFloat);
                 pacer.Enqueue(scratch.AsSpan(0, buffer.Length));
             }
@@ -198,7 +209,7 @@ internal static class Program
                         double.TryParse(parts[1], NumberStyles.Float, CultureInfo.InvariantCulture, out var db) &&
                         double.IsFinite(db):
                         var clampedDb = Math.Clamp(db, -60, 20);
-                        gain = (float)Math.Pow(10, clampedDb / 20.0);
+                        Volatile.Write(ref gain, (float)Math.Pow(10, clampedDb / 20.0));
                         Emit("gain", new { gainDb = clampedDb });
                         break;
                     case "stats":

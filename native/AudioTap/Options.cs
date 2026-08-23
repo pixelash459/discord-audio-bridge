@@ -6,6 +6,13 @@ internal enum Mode
 {
     ListDevices,
     ListProcesses,
+    NowPlaying,
+
+    /// <summary>
+    /// Long-lived enumeration. One process stays resident and pushes changes, instead of the bot
+    /// spawning a fresh helper every few seconds just to ask the same question again.
+    /// </summary>
+    Monitor,
     Capture,
 }
 
@@ -42,6 +49,12 @@ internal sealed class Options
 
     public double GainDb;
 
+    /// <summary>How often <see cref="Mode.Monitor"/> re-reads the audio session list, in ms.</summary>
+    public int PollMs = 1_500;
+
+    /// <summary>Extract executable icons during process enumeration. Costs a few ms per process.</summary>
+    public bool WithIcons;
+
     public static Options Parse(string[] args)
     {
         var o = new Options();
@@ -60,6 +73,18 @@ internal sealed class Options
                     break;
                 case "--list-processes":
                     o.Mode = Mode.ListProcesses;
+                    break;
+                case "--now-playing":
+                    o.Mode = Mode.NowPlaying;
+                    break;
+                case "--monitor":
+                    o.Mode = Mode.Monitor;
+                    break;
+                case "--with-icons":
+                    o.WithIcons = true;
+                    break;
+                case "--poll-ms":
+                    o.PollMs = int.Parse(Next(arg), NumberStyles.None, CultureInfo.InvariantCulture);
                     break;
                 case "--capture":
                     o.Mode = Mode.Capture;
@@ -107,6 +132,7 @@ internal sealed class Options
 
         o.BufferMs = Math.Clamp(o.BufferMs, 20, 2000);
         o.GainDb = Math.Clamp(o.GainDb, -60, 20);
+        o.PollMs = Math.Clamp(o.PollMs, 250, 60_000);
 
         return o;
     }
@@ -117,8 +143,18 @@ internal sealed class Options
           AudioTap --list-devices
               Print active render endpoints as JSON.
 
-          AudioTap --list-processes
+          AudioTap --list-processes [--with-icons]
               Print processes currently holding an audio render session, as JSON.
+              --with-icons embeds each executable's icon as a base64 PNG.
+
+          AudioTap --now-playing
+              Print the system media session's current track as JSON, if any.
+
+          AudioTap --monitor [--poll-ms <n>] [--with-icons]
+              Stay resident and print line-delimited JSON events on stdout whenever the
+              process list, device list, or now-playing track changes. stdin accepts
+              "refresh" and "quit". This exists so the control panel can show a live
+              source list without spawning a helper on a timer.
 
           AudioTap --capture --pid <n> [--exclude] [options]
               Per-process loopback capture (Windows 10 version 2004 / build 19041+).

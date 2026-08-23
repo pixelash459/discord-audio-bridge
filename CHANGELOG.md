@@ -6,6 +6,48 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [1.3.0] - 2026-08-23
+
+### Added
+
+- Multi-source float mixing with up to four application/device inputs, independent input trims,
+  reusable route presets, concurrent guild sessions, optional last-route resume, and automatic
+  leave when a channel has no human listeners.
+- True-peak limiting and optional EBU R128 loudness matching, with live loudness controls in the
+  panel and `/loudness` command.
+- One resident Windows AudioTap monitor pushes source/device changes, application icons, and system
+  media title/artwork instead of spawning enumeration helpers on a timer. Sources selected by name
+  follow an application to its new PID after it restarts.
+- Discord activity and voice-channel status integration, Components V2 command responses, and a
+  generated invite URL containing every permission used by the bridge.
+- Route controls, meters, media artwork, installable-PWA metadata, lock-screen actions, and a
+  **Forget this device** action in the remote dashboard.
+- A stateful Windows tray icon, mute/stop menu actions and global hotkeys, opt-in autostart,
+  remembered window bounds, dark system chrome, and retryable startup failures.
+
+### Security
+
+- Replaced the localhost-wide control cookie with random, single-use WebSocket tickets that expire
+  after 30 seconds. The durable control credential is never sent to unrelated loopback ports.
+- Fresh installs keep remote access and Tailscale trust disabled until explicitly enabled. Slash
+  commands, autocomplete, and message controls are administrator-only by default and at runtime.
+- Executable settings validate the expected binary and existing path; log paths stay within the
+  runtime root. Windows state files receive an explicit current-user ACL in addition to Unix modes.
+- Unexpected API failures and missing static assets no longer reveal host filesystem details.
+- CI pins and SHA-256 verifies nFPM, appimagetool, and the AppImage runtime before executing them.
+
+### Fixed
+
+- Failed audio startup now destroys its unregistered voice connection and partial capture pipeline.
+  AudioTap/monitor stdin observes asynchronous `EPIPE` errors instead of crashing the bridge.
+- Environment values round-trip Windows backslashes and quotes through `node:util.parseEnv`.
+- File logging is asynchronous, respects `LOG_LEVEL`, and rotates throughout a long-running session.
+- Mixer gain composition, voice mute state commits, PipeWire capability refresh, child-output caps,
+  static directory requests, source-monitor concurrency, and native frame/counter synchronization.
+- The desktop browser action retains authentication, retry does not duplicate WebView handlers,
+  polling cannot overlap, external URI schemes are rejected, Node resolves to an absolute PATH
+  entry, and a Windows job object cleans up descendants after forced termination.
+
 ## [1.2.1] - 2026-08-23
 
 ### Changed
@@ -177,7 +219,8 @@ First release.
 - ffmpeg's Ogg muxer defaults to one-second pages, which starves the Discord player. This project
   sets `-page_duration 20000`; measured, that is 163 ms to first packet versus 3186 ms.
 
-[Unreleased]: https://github.com/AshutoshChaudhary-lgtm/discord-audio-bridge/compare/v1.2.1...HEAD
+[Unreleased]: https://github.com/AshutoshChaudhary-lgtm/discord-audio-bridge/compare/v1.3.0...HEAD
+[1.3.0]: https://github.com/AshutoshChaudhary-lgtm/discord-audio-bridge/compare/v1.2.1...v1.3.0
 [1.2.1]: https://github.com/AshutoshChaudhary-lgtm/discord-audio-bridge/compare/v1.2.0...v1.2.1
 [1.2.0]: https://github.com/AshutoshChaudhary-lgtm/discord-audio-bridge/compare/v1.1.3...v1.2.0
 [1.1.3]: https://github.com/AshutoshChaudhary-lgtm/discord-audio-bridge/compare/v1.1.2...v1.1.3

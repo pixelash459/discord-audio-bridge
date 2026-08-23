@@ -28,7 +28,7 @@ export async function findRunningControlPanel(
       (saved.port ?? 0) < 1 ||
       (saved.port ?? 0) > 65_535 ||
       typeof saved.token !== 'string' ||
-      saved.token.length < 24
+      !/^[A-Za-z0-9_-]{24,256}$/.test(saved.token)
     ) {
       return undefined;
     }

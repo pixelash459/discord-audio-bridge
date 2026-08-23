@@ -1,6 +1,7 @@
 import { spawn, spawnSync, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { once } from 'node:events';
-import { createInterface } from 'node:readline';
+import { dirname, join } from 'node:path';
+import { createInterface, type Interface } from 'node:readline';
 import type { Readable } from 'node:stream';
 
 import { config, DISCORD_AUDIO } from '../config.ts';
@@ -9,7 +10,7 @@ import { Pacer } from './pacer.ts';
 import type { CaptureTap, DeviceInfo, ProcessInfo, RawFormat, TapOptions, TapStats } from './tap.ts';
 
 const log = logger('pipewire');
-let availability: boolean | undefined;
+let availability: { value: boolean; expires: number } | undefined;
 let nodeCache: { value: PwNode[]; expires: number } | undefined;
 let nodeDump: Promise<PwNode[]> | undefined;
 
@@ -25,7 +26,7 @@ const nodeName = (node: PwNode): string => String(props(node)['node.name'] ?? ''
 const nodeState = (node: PwNode): string => node.state ?? node.info?.state ?? '';
 
 export function pipewireAvailable(): boolean {
-  if (availability !== undefined) return availability;
+  if (availability && availability.expires > Date.now()) return availability.value;
   const record = spawnSync(config.paths.pwRecord, ['--version'], {
     encoding: 'utf8',
     windowsHide: true,
@@ -34,25 +35,38 @@ export function pipewireAvailable(): boolean {
     encoding: 'utf8',
     windowsHide: true,
   });
-  availability = !record.error && record.status === 0 && !dump.error && dump.status === 0;
-  return availability;
+  const value = !record.error && record.status === 0 && !dump.error && dump.status === 0;
+  availability = { value, expires: Date.now() + 5_000 };
+  return value;
 }
 
 async function run(command: string, args: string[], timeoutMs = 10_000): Promise<string> {
   const child = spawn(command, args, { windowsHide: true });
   let stdout = '';
   let stderr = '';
+  let oversized = false;
+  const maxOutput = 16 * 1024 * 1024;
   const timer = setTimeout(() => child.kill(), timeoutMs);
   child.stdout.setEncoding('utf8');
-  child.stdout.on('data', (chunk: string) => (stdout += chunk));
+  child.stdout.on('data', (chunk: string) => {
+    if (stdout.length + chunk.length > maxOutput) {
+      oversized = true;
+      child.kill();
+      return;
+    }
+    stdout += chunk;
+  });
   child.stderr.setEncoding('utf8');
-  child.stderr.on('data', (chunk: string) => (stderr += chunk));
+  child.stderr.on('data', (chunk: string) => {
+    if (stderr.length < 64 * 1024) stderr += chunk.slice(0, 64 * 1024 - stderr.length);
+  });
   let code: number | null;
   try {
     [code] = (await once(child, 'close')) as [number | null, NodeJS.Signals | null];
   } finally {
     clearTimeout(timer);
   }
+  if (oversized) throw new Error(`${command} produced more than 16 MiB of output.`);
   if (code !== 0) throw new Error(`${command} exited ${code}: ${stderr.trim().slice(0, 400)}`);
   return stdout;
 }
@@ -77,8 +91,9 @@ async function dumpNodes(): Promise<PwNode[]> {
 async function defaultSinkName(): Promise<string | null> {
   try {
     // Metadata objects are not part of pw-dump; pw-metadata prints them, value JSON-encoded.
-    // Derived from the pw-dump path because the two ship in the same PipeWire tools package.
-    const pwMetadata = config.paths.pwDump.replace(/pw-dump$/, 'pw-metadata');
+    // The tools ship together. Resolve the sibling directory without assuming the configured
+    // pw-dump filename literally ends in "pw-dump" (it may be a versioned wrapper).
+    const pwMetadata = join(dirname(config.paths.pwDump), 'pw-metadata');
     const raw = await run(pwMetadata, ['-n', 'default'], 5_000);
     const match = /default\.audio\.sink.*?"name"\s*:\s*"([^"]+)"/.exec(raw);
     return match?.[1] ?? null;
@@ -182,17 +197,21 @@ export class PipedTap implements CaptureTap {
 
   #child: ChildProcessWithoutNullStreams;
   #pacer: Pacer;
+  #errors: Interface;
   #closed = false;
   #exited: Promise<void>;
 
-  private constructor(child: ChildProcessWithoutNullStreams, pacer: Pacer, format: RawFormat) {
+  private constructor(child: ChildProcessWithoutNullStreams, pacer: Pacer, format: RawFormat, errors: Interface) {
     this.#child = child;
     this.#pacer = pacer;
+    this.#errors = errors;
     this.format = format;
     this.stream = pacer.stream;
-    this.#exited = once(child, 'close').then(([code, signal]) => {
-      log.info('pw-record exited', { pid: child.pid, code, signal });
-    });
+    this.#exited = once(child, 'close')
+      .then(([code, signal]) => {
+        log.info('pw-record exited', { pid: child.pid, code, signal });
+      })
+      .finally(() => this.#errors.close());
   }
 
   static async start(options: PipedTapOptions): Promise<PipedTap> {
@@ -245,7 +264,7 @@ export class PipedTap implements CaptureTap {
     });
     if (options.gainDb) pacer.setGain(options.gainDb);
 
-    const tap = new PipedTap(child, pacer, format);
+    const tap = new PipedTap(child, pacer, format, errors);
     pipewireChildren.add(child);
     child.once('close', () => pipewireChildren.delete(child));
     log.info('capture started', { pid: child.pid, target, ...format });

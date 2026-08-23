@@ -1,9 +1,10 @@
-import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { isIP } from 'node:net';
-import { dirname, join } from 'node:path';
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { parseEnv } from 'node:util';
 
 import { runtimeRoot } from '../config.ts';
+import { restrictPrivateFile } from '../platform.ts';
 
 // Development uses the checkout; read-only packages use the per-user runtime directory.
 const envPath = join(runtimeRoot, '.env');
@@ -17,6 +18,14 @@ export const EDITABLE_KEYS = [
   'OPUS_VBR',
   'OPUS_COMPLEXITY',
   'CAPTURE_BUFFER_MS',
+  'AUDIO_LOUDNESS',
+  'AUDIO_TARGET_LUFS',
+  'AUDIO_TRUE_PEAK_DB',
+  'PRESENCE_ACTIVITY',
+  'PRESENCE_CHANNEL_STATUS',
+  'PRESENCE_NOW_PLAYING',
+  'AUTO_LEAVE_SECONDS',
+  'AUTO_RESUME',
   'FFMPEG_PATH',
   'AUDIOTAP_PATH',
   'LOG_LEVEL',
@@ -45,14 +54,54 @@ function wholeNumber(key: string, value: string, min: number, max: number): stri
   return String(Number(value));
 }
 
+/** Same, but for settings whose useful range is below zero (loudness targets are all negative). */
+function signedNumber(key: string, value: string, min: number, max: number): string {
+  if (!/^-?\d+$/.test(value) || Number(value) < min || Number(value) > max) {
+    throw new Error(`${key} must be a whole number between ${min} and ${max}.`);
+  }
+  return String(Number(value));
+}
+
+function flag(key: string, value: string): string {
+  if (!['true', 'false'].includes(value.toLowerCase())) throw new Error(`${key} must be true or false.`);
+  return value.toLowerCase();
+}
+
+function executablePath(key: 'FFMPEG_PATH' | 'AUDIOTAP_PATH', value: string): string {
+  const expected = key === 'FFMPEG_PATH' ? ['ffmpeg', 'ffmpeg.exe'] : ['audiotap', 'audiotap.exe'];
+  const name = basename(value).toLowerCase();
+  if (!expected.includes(name)) {
+    throw new Error(`${key} must point to ${key === 'FFMPEG_PATH' ? 'ffmpeg' : 'AudioTap'}.`);
+  }
+
+  // A bare executable name is resolved by the inherited PATH. A path must already identify a
+  // regular file; accepting an arbitrary future path turns configuration access into a launcher.
+  if (value === name || (!value.includes('/') && !value.includes('\\'))) return value;
+  const target = isAbsolute(value) ? value : resolve(runtimeRoot, value);
+  if (!existsSync(target) || !statSync(target).isFile()) {
+    throw new Error(`${key} must point to an existing file.`);
+  }
+  return value;
+}
+
+function logPath(value: string): string {
+  if (value.toLowerCase() === 'off') return 'off';
+  const target = resolve(runtimeRoot, value);
+  const inside = relative(runtimeRoot, target);
+  if (inside === '..' || inside.startsWith(`..${sep}`) || isAbsolute(inside)) {
+    throw new Error('LOG_FILE must stay inside the writable runtime directory.');
+  }
+  return value;
+}
+
 function validate(key: EditableKey, raw: string): string {
   const value = raw.trim();
   if (value === '') return '';
-  if (value.length > 4_096 || /[\0\r\n]/.test(value)) throw new Error(`${key} contains invalid characters.`);
+  if (value.length > 4_096 || /[\0\r\n']/.test(value)) throw new Error(`${key} contains invalid characters.`);
 
   switch (key) {
     case 'DISCORD_TOKEN':
-      if (value.length < 24 || value.length > 256 || /\s/.test(value)) {
+      if (value.length < 24 || value.length > 256 || !/^[A-Za-z0-9._-]+$/.test(value)) {
         throw new Error('DISCORD_TOKEN does not look like a Discord bot token.');
       }
       return value;
@@ -66,6 +115,22 @@ function validate(key: EditableKey, raw: string): string {
       return wholeNumber(key, value, 0, 10);
     case 'CAPTURE_BUFFER_MS':
       return wholeNumber(key, value, 20, 2_000);
+    case 'AUDIO_LOUDNESS':
+      if (!['off', 'limit', 'match'].includes(value)) {
+        throw new Error('AUDIO_LOUDNESS must be off, limit, or match.');
+      }
+      return value;
+    case 'AUDIO_TARGET_LUFS':
+      return signedNumber(key, value, -40, -5);
+    case 'AUDIO_TRUE_PEAK_DB':
+      return signedNumber(key, value, -9, 0);
+    case 'AUTO_LEAVE_SECONDS':
+      return wholeNumber(key, value, 0, 86_400);
+    case 'PRESENCE_ACTIVITY':
+    case 'PRESENCE_CHANNEL_STATUS':
+    case 'PRESENCE_NOW_PLAYING':
+    case 'AUTO_RESUME':
+      return flag(key, value);
     case 'CONTROL_PORT':
     case 'REMOTE_PORT':
       return wholeNumber(key, value, 0, 65_535);
@@ -85,13 +150,21 @@ function validate(key: EditableKey, raw: string): string {
       if (isIP(value) === 0 && !hostname.test(value)) throw new Error('REMOTE_HOST is not valid.');
       return value;
     }
+    case 'FFMPEG_PATH':
+    case 'AUDIOTAP_PATH':
+      return executablePath(key, value);
+    case 'LOG_FILE':
+      return logPath(value);
     default:
       return value;
   }
 }
 
-function serialize(value: string): string {
-  return JSON.stringify(value);
+export function serializeEnvValue(value: string): string {
+  // node:util parseEnv interprets \n, \t, and friends in double-quoted values but does not decode
+  // JSON's escaped backslashes symmetrically. Single quotes preserve Windows paths byte-for-byte.
+  if (value.includes("'")) throw new Error('Configuration values cannot contain a single quote.');
+  return `'${value}'`;
 }
 
 export interface ConfigView {
@@ -156,13 +229,13 @@ export function writeConfig(updates: Partial<Record<EditableKey, string>>): void
     if (!pending.has(editableKey)) return [];
     const value = pending.get(editableKey)!;
     pending.delete(editableKey);
-    return value === '' ? [] : [`${key}=${serialize(value)}`];
+    return value === '' ? [] : [`${key}=${serializeEnvValue(value)}`];
   });
 
   // Anything not already present gets appended.
   const additions = [...pending.entries()]
     .filter(([, value]) => value !== '')
-    .map(([key, value]) => `${key}=${serialize(value)}`);
+    .map(([key, value]) => `${key}=${serializeEnvValue(value)}`);
 
   if (additions.length > 0) {
     if (rewritten.at(-1)?.trim() !== '') rewritten.push('');
@@ -175,6 +248,10 @@ export function writeConfig(updates: Partial<Record<EditableKey, string>>): void
     mode: 0o600,
   });
   chmodSync(envPath, 0o600);
+  if (!restrictPrivateFile(envPath)) {
+    // Configuration was still saved; callers can surface a warning through diagnostics/logging.
+    process.stderr.write('warning: could not restrict the .env ACL to the current Windows account\n');
+  }
 
   // Reflect the change in the running process so anything reading process.env sees it. Values that
   // config.ts froze at import time still need a restart, which the UI tells the user about.
@@ -191,6 +268,15 @@ export const RESTART_REQUIRED_KEYS: readonly string[] = [
   'OPUS_VBR',
   'OPUS_COMPLEXITY',
   'CAPTURE_BUFFER_MS',
+  // AUDIO_LOUDNESS is deliberately absent: it is only the default for new sessions, and a live
+  // session can be switched from the panel or /loudness without restarting anything.
+  'AUDIO_TARGET_LUFS',
+  'AUDIO_TRUE_PEAK_DB',
+  'PRESENCE_ACTIVITY',
+  'PRESENCE_CHANNEL_STATUS',
+  'PRESENCE_NOW_PLAYING',
+  'AUTO_LEAVE_SECONDS',
+  'AUTO_RESUME',
   'FFMPEG_PATH',
   'AUDIOTAP_PATH',
   'LOG_LEVEL',

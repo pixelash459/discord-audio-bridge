@@ -125,10 +125,16 @@ jobs:
             os: ubuntu-latest
             nfpm-arch: x86_64
             appimage-arch: x86_64
+            nfpm_sha256: 0660ca602b2d2d2ae4781a06c692b3eeb9d437ffea05b831d76e41f4a3188783
+            appimagetool_sha256: ed4ce84f0d9caff66f50bcca6ff6f35aae54ce8135408b3fa33abfc3cb384eb0
+            appimage_runtime_sha256: 1cc49bcf1e2ccd593c379adb17c9f85a36d619088296504de95b1d06215aebbf
           - name: linux-arm64
             os: ubuntu-24.04-arm
             nfpm-arch: arm64
             appimage-arch: aarch64
+            nfpm_sha256: 1c0f5f2999b9a974bfb04fdb0cc3306096de530ac5dbb25d739cc5f5219c919c
+            appimagetool_sha256: f0837e7448a0c1e4e650a93bb3e85802546e60654ef287576f46c71c126a9158
+            appimage_runtime_sha256: 7d5d772b7c32f0c84caf0a452a3072a5709027d7eac5856feb89a7a7a8881372
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -156,16 +162,28 @@ jobs:
       - name: Install nfpm
         if: runner.os == 'Linux'
         run: |
-          curl -fsSL "https://github.com/goreleaser/nfpm/releases/download/v2.47.0/nfpm_2.47.0_linux_${{ matrix.nfpm-arch }}.tar.gz" \
-            | tar -xz -C /usr/local/bin nfpm
+          download_dir="$(mktemp -d)"
+          archive="$download_dir/nfpm.tar.gz"
+          curl -fsSL -o "$archive" \
+            "https://github.com/goreleaser/nfpm/releases/download/v2.47.0/nfpm_2.47.0_Linux_${{ matrix.nfpm-arch }}.tar.gz"
+          echo "${{ matrix.nfpm_sha256 }}  $archive" | sha256sum --check --strict
+          sudo tar -xzf "$archive" -C /usr/local/bin nfpm
           nfpm --version
 
       - name: Install appimagetool
         if: runner.os == 'Linux'
         run: |
-          curl -fsSL -o /usr/local/bin/appimagetool \
-            "https://github.com/AppImage/AppImageKit/releases/download/continuous/appimagetool-${{ matrix.appimage-arch }}.AppImage"
-          chmod +x /usr/local/bin/appimagetool
+          download_dir="$(mktemp -d)"
+          tool="$download_dir/appimagetool"
+          runtime="$RUNNER_TEMP/appimage-runtime-${{ matrix.appimage-arch }}"
+          curl -fsSL -o "$tool" \
+            "https://github.com/AppImage/appimagetool/releases/download/1.9.1/appimagetool-${{ matrix.appimage-arch }}.AppImage"
+          echo "${{ matrix.appimagetool_sha256 }}  $tool" | sha256sum --check --strict
+          curl -fsSL -o "$runtime" \
+            "https://github.com/AppImage/type2-runtime/releases/download/continuous/runtime-${{ matrix.appimage-arch }}"
+          echo "${{ matrix.appimage_runtime_sha256 }}  $runtime" | sha256sum --check --strict
+          sudo install -m 0755 "$tool" /usr/local/bin/appimagetool
+          echo "APPIMAGE_RUNTIME_PATH=$runtime" >> "$GITHUB_ENV"
           appimagetool --appimage-extract-and-run --version
 
       - name: Package

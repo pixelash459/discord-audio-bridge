@@ -1,6 +1,8 @@
 import { config, type LogLevel } from './config.ts';
-import { appendFileSync, chmodSync, existsSync, mkdirSync, renameSync, statSync } from 'node:fs';
+import { existsSync } from 'node:fs';
+import { appendFile, chmod, mkdir, rename, stat } from 'node:fs/promises';
 import { dirname } from 'node:path';
+import { restrictPrivateFile } from './platform.ts';
 
 const rank: Record<LogLevel, number> = { error: 0, warn: 1, info: 2, debug: 3 };
 const threshold = rank[config.logLevel];
@@ -28,8 +30,10 @@ const HISTORY_LIMIT = 500;
 const MAX_LOG_BYTES = 10 * 1024 * 1024;
 const history: LogEntry[] = [];
 const listeners = new Set<(entry: LogEntry) => void>();
-let fileReady = false;
 let fileUnavailable = false;
+let fileBytes: number | undefined;
+let fileHardened = false;
+let writeQueue: Promise<void> = Promise.resolve();
 
 export function recentLogs(): readonly LogEntry[] {
   return history;
@@ -56,9 +60,11 @@ function emit(level: LogLevel, scope: string, message: string, extra?: unknown) 
     }
   }
 
-  persist(entry);
-
   if (rank[level] > threshold) return;
+
+  // Disk and console obey LOG_LEVEL. The in-memory history intentionally stays complete so the
+  // Diagnostics panel can still explain a failure that happened just before it was opened.
+  queuePersist(entry);
 
   const time = new Date(entry.at).toISOString().slice(11, 23);
   const line = `\x1b[90m${time}\x1b[0m ${tint[level]}${level.padEnd(5)}\x1b[0m \x1b[35m${scope}\x1b[0m ${entry.message}`;
@@ -106,33 +112,53 @@ function redact(value: string): string {
   return result;
 }
 
-function persist(entry: LogEntry): void {
-  const path = config.paths.logFile;
-  if (!path || fileUnavailable) return;
-
-  try {
-    if (!fileReady) {
-      mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
-      if (existsSync(path) && statSync(path).size >= MAX_LOG_BYTES) {
-        const rotated = `${path}.1`;
-        // Windows rename does not replace an existing file. A timestamp keeps every rollover
-        // recoverable without needing a destructive unlink in the logger's failure path.
-        const target = existsSync(rotated) ? `${path}.${Date.now()}` : rotated;
-        renameSync(path, target);
-      }
-      if (existsSync(path)) chmodSync(path, 0o600);
-      fileReady = true;
-    }
-
-    appendFileSync(path, `${JSON.stringify({ ...entry, at: new Date(entry.at).toISOString() })}\n`, {
-      encoding: 'utf8',
-      mode: 0o600,
-    });
-  } catch (error) {
+function queuePersist(entry: LogEntry): void {
+  if (!config.paths.logFile || fileUnavailable) return;
+  writeQueue = writeQueue.then(() => persist(entry)).catch((error: unknown) => {
     fileUnavailable = true;
     const reason = error instanceof Error ? error.message : String(error);
     process.stderr.write(`logger: persistent log disabled: ${redact(reason)}\n`);
+  });
+}
+
+async function persist(entry: LogEntry): Promise<void> {
+  const path = config.paths.logFile;
+  if (!path || fileUnavailable) return;
+
+  if (fileBytes === undefined) {
+    await mkdir(dirname(path), { recursive: true, mode: 0o700 });
+    try {
+      const current = await stat(path);
+      fileBytes = current.size;
+      await chmod(path, 0o600);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+      fileBytes = 0;
+    }
   }
+
+  const line = `${JSON.stringify({ ...entry, at: new Date(entry.at).toISOString() })}\n`;
+  const bytes = Buffer.byteLength(line);
+  if (fileBytes > 0 && fileBytes + bytes >= MAX_LOG_BYTES) {
+    const rotated = `${path}.1`;
+    // Windows rename does not replace an existing file. A timestamp keeps every rollover
+    // recoverable without deleting an earlier diagnostic log.
+    const target = existsSync(rotated) ? `${path}.${Date.now()}` : rotated;
+    await rename(path, target);
+    fileBytes = 0;
+  }
+
+  await appendFile(path, line, { encoding: 'utf8', mode: 0o600 });
+  fileBytes += bytes;
+  if (!fileHardened) {
+    fileHardened = true;
+    restrictPrivateFile(path);
+  }
+}
+
+/** Waits for queued file writes so a graceful shutdown does not lose its final diagnostics. */
+export async function flushLogs(): Promise<void> {
+  await writeQueue;
 }
 
 export function logger(scope: string) {

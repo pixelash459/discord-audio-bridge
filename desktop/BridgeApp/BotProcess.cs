@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.IO;
 using System.Net.Http;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 
 namespace BridgeApp;
 
@@ -24,6 +25,7 @@ internal sealed class BotProcess : IDisposable
 
     private readonly string projectRoot;
     private Process? child;
+    private IntPtr job;
 
     public event Action<string>? Output;
 
@@ -142,7 +144,11 @@ internal sealed class BotProcess : IDisposable
             return null; // truncated or mid-write; try again next tick
         }
 
-        if (string.IsNullOrEmpty(endpoint.Token)) return null;
+        if (endpoint.Port is < 1 or > 65535
+            || !Regex.IsMatch(endpoint.Token, "^[A-Za-z0-9_-]{24,256}$", RegexOptions.CultureInvariant))
+        {
+            return null;
+        }
 
         try
         {
@@ -159,11 +165,18 @@ internal sealed class BotProcess : IDisposable
 
     private void Start()
     {
+        var node = ResolveNode();
+        if (node is null)
+        {
+            throw new InvalidOperationException(
+                "Could not find Node.js on PATH. Install Node.js 22.18 or newer and restart the app.");
+        }
+
         var info = new ProcessStartInfo
         {
-            // CreateProcess searches PATH for a bare executable name, so this finds Node wherever
-            // it was installed without us hard-coding a location.
-            FileName = "node.exe",
+            // Use the absolute PATH result. A bare node.exe makes CreateProcess search the project
+            // directory first, allowing a stray executable in an unpacked checkout to shadow Node.
+            FileName = node,
             WorkingDirectory = projectRoot,
             UseShellExecute = false,
             CreateNoWindow = true,
@@ -184,6 +197,7 @@ internal sealed class BotProcess : IDisposable
         try
         {
             process.Start();
+            job = Native.CreateKillOnCloseJob(process.Handle);
             AppLog.Info("bot process spawned", new { process.Id });
         }
         catch (Exception ex)
@@ -196,6 +210,26 @@ internal sealed class BotProcess : IDisposable
 
         process.BeginOutputReadLine();
         process.BeginErrorReadLine();
+    }
+
+    private static string? ResolveNode()
+    {
+        foreach (var rawDirectory in (Environment.GetEnvironmentVariable("PATH") ?? string.Empty)
+                     .Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries))
+        {
+            var directory = rawDirectory.Trim().Trim('"');
+            if (!Path.IsPathFullyQualified(directory)) continue;
+            try
+            {
+                var candidate = Path.Combine(directory, "node.exe");
+                if (File.Exists(candidate)) return Path.GetFullPath(candidate);
+            }
+            catch (Exception)
+            {
+                // A malformed or inaccessible PATH entry should not hide later valid entries.
+            }
+        }
+        return null;
     }
 
     private void Report(string? line)
@@ -229,6 +263,11 @@ internal sealed class BotProcess : IDisposable
         {
             child.Dispose();
             child = null;
+            if (job != IntPtr.Zero)
+            {
+                _ = Native.CloseHandle(job);
+                job = IntPtr.Zero;
+            }
         }
     }
 }

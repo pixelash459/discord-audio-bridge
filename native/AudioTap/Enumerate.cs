@@ -20,7 +20,8 @@ internal sealed record ProcessInfo(
     string DisplayName,
     string State,
     float Peak,
-    string DeviceId);
+    string DeviceId,
+    string? Icon = null);
 
 internal static class Enumerate
 {
@@ -68,7 +69,7 @@ internal static class Enumerate
     /// Every process currently holding a render session on any active endpoint. This is the list a
     /// user actually wants to pick from - it is short, and it only contains apps that make sound.
     /// </summary>
-    public static List<ProcessInfo> Processes()
+    public static List<ProcessInfo> Processes(bool withIcons = false)
     {
         using var enumerator = new MMDeviceEnumerator();
         var byPid = new Dictionary<uint, ProcessInfo>();
@@ -111,7 +112,14 @@ internal static class Enumerate
                     // A process can render on several endpoints. Keep the liveliest entry.
                     if (byPid.TryGetValue(pid, out var existing) && existing.Peak >= peak) continue;
 
-                    byPid[pid] = new ProcessInfo(pid, name, display, state, peak, device.ID);
+                    byPid[pid] = new ProcessInfo(
+                        pid,
+                        name,
+                        display,
+                        state,
+                        peak,
+                        device.ID,
+                        withIcons ? AppIcons.For(pid) : null);
                 }
             }
         }

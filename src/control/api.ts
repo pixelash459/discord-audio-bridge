@@ -2,11 +2,20 @@ import { spawn } from 'node:child_process';
 import type { IncomingMessage } from 'node:http';
 import { ChannelType, PermissionFlagsBits, type Client, type VoiceBasedChannel } from 'discord.js';
 
-import { config, projectRoot } from '../config.ts';
+import { config, projectRoot, type LoudnessMode } from '../config.ts';
 import { logger } from '../logger.ts';
-import { collectDiagnostics } from '../commands.ts';
+import { collectReport, renderReport } from '../diagnostics.ts';
 import { listDshowDevices } from '../audio/encoder.ts';
+import { nowPlaying, nowPlayingSummary, sourceMonitor, type NowPlaying } from '../audio/monitor.ts';
 import { captureBackend, isAudioTapBuilt, listDevices, listProcesses } from '../audio/tap.ts';
+import {
+  deletePreset,
+  getPreset,
+  listPresets,
+  savePreset,
+  touchPreset,
+  type Route,
+} from '../presets.ts';
 import { IS_WINDOWS } from '../platform.ts';
 import {
   allSessions,
@@ -24,7 +33,7 @@ import {
   finiteNumber,
   OPUS_MAX_BITRATE,
   OPUS_MIN_BITRATE,
-  validateSource,
+  validateSources,
 } from '../validation.ts';
 
 const log = logger('api');
@@ -82,7 +91,40 @@ export interface Snapshot {
     complexity: number;
     bufferMs: number;
     bitrateOverride: number | undefined;
+    loudness: LoudnessMode;
+    targetLufs: number;
   };
+  /** Whatever the host is playing right now, independent of what is being captured. */
+  nowPlaying: NowPlaying | null;
+  /** An OAuth2 URL with exactly the permissions this bot needs, or null before sign-in. */
+  inviteUrl: string | null;
+  automation: {
+    leaveWhenEmptySeconds: number;
+    resumeLastRoute: boolean;
+  };
+}
+
+/**
+ * Every permission the bridge actually uses, so the panel can hand out an invite URL that works
+ * first time. Set Voice Channel Status is the one people miss: it is absent from most older invite
+ * links, which is why the status line silently never appears.
+ */
+const REQUIRED_PERMISSIONS =
+  PermissionFlagsBits.ViewChannel |
+  PermissionFlagsBits.Connect |
+  PermissionFlagsBits.Speak |
+  PermissionFlagsBits.UseVAD |
+  PermissionFlagsBits.ManageChannels |
+  PermissionFlagsBits.MuteMembers |
+  PermissionFlagsBits.SetVoiceChannelStatus |
+  PermissionFlagsBits.SendMessages |
+  PermissionFlagsBits.EmbedLinks;
+
+function inviteUrl(client: Client): string | null {
+  const id = client.application?.id ?? client.user?.id ?? process.env['DISCORD_APP_ID']?.trim();
+  if (!id) return null;
+  const scopes = encodeURIComponent('bot applications.commands');
+  return `https://discord.com/oauth2/authorize?client_id=${id}&scope=${scopes}&permissions=${REQUIRED_PERMISSIONS}`;
 }
 
 export async function buildSnapshot(client: Client): Promise<Snapshot> {
@@ -114,6 +156,14 @@ export async function buildSnapshot(client: Client): Promise<Snapshot> {
       complexity: config.opus.complexity,
       bufferMs: config.capture.bufferMs,
       bitrateOverride: config.opus.bitrate,
+      loudness: config.audio.loudness,
+      targetLufs: config.audio.targetLufs,
+    },
+    nowPlaying: nowPlayingSummary(),
+    inviteUrl: inviteUrl(client),
+    automation: {
+      leaveWhenEmptySeconds: config.automation.leaveWhenEmptySeconds,
+      resumeLastRoute: config.automation.resumeLastRoute,
     },
   };
 }
@@ -259,6 +309,95 @@ function runScript(script: string): Promise<{ ok: boolean; output: string }> {
   });
 }
 
+interface StreamRequest {
+  guildId?: string;
+  channelId?: string;
+  source?: SourceSpec;
+  sources?: SourceSpec[];
+  bitrate?: number;
+  loudness?: LoudnessMode;
+  gainDb?: number;
+}
+
+const LOUDNESS_MODES: LoudnessMode[] = ['off', 'limit', 'match'];
+
+/**
+ * The one place a stream is started, shared by the stream route and by applying a saved route.
+ *
+ * Both accept either a single `source` or a `sources` array; a saved route always uses the array
+ * form. Validation happens here rather than at either call site so a hand-edited routes.json gets
+ * exactly the same scrutiny as a request off the wire.
+ */
+async function startFromRequest(client: Client, input: StreamRequest) {
+  if (!input.guildId || !input.channelId) throw new ApiError(400, 'guildId and channelId are required.');
+
+  let sources: SourceSpec[];
+  try {
+    sources = validateSources(input);
+  } catch (error) {
+    throw new ApiError(400, error instanceof Error ? error.message : String(error));
+  }
+
+  if (sources.some((source) => source.kind === 'dshow') && !IS_WINDOWS) {
+    throw new ApiError(400, 'DirectShow sources are Windows-only. Capture an app or a device instead.');
+  }
+  if (sources.some((source) => source.kind !== 'dshow') && !isAudioTapBuilt()) {
+    throw new ApiError(
+      409,
+      IS_WINDOWS
+        ? 'AudioTap is not built, so only DirectShow sources work. Build it from the Setup tab.'
+        : 'The PipeWire capture tools are missing, so nothing is capturable. Install pipewire-bin on Debian/Ubuntu or pipewire-utils on Fedora.',
+    );
+  }
+
+  if (input.bitrate !== undefined) {
+    try {
+      finiteNumber(input.bitrate, 'Bitrate', OPUS_MIN_BITRATE, OPUS_MAX_BITRATE);
+    } catch (error) {
+      throw new ApiError(400, error instanceof Error ? error.message : String(error));
+    }
+  }
+  if (input.loudness !== undefined && !LOUDNESS_MODES.includes(input.loudness)) {
+    throw new ApiError(400, `Loudness must be one of ${LOUDNESS_MODES.join(', ')}.`);
+  }
+
+  const channel = requireChannel(client, input.guildId, input.channelId);
+  const bitrate = resolveBitrate(channel, input.bitrate);
+  const session = await startOrRetarget(
+    channel,
+    sources,
+    bitrate,
+    input.loudness ? { loudness: input.loudness } : {},
+  );
+
+  if (input.gainDb !== undefined) {
+    try {
+      await session.setGain(finiteNumber(input.gainDb, 'Gain', -60, 20));
+    } catch (error) {
+      log.debug('could not apply the requested gain', error);
+    }
+  }
+
+  log.info('stream request completed', {
+    guild: input.guildId,
+    channel: input.channelId,
+    sources: sources.map((source) => source.kind),
+    bitrate,
+  });
+  return session;
+}
+
+function routeFrom(session: SessionStatus): Route {
+  return {
+    guildId: session.guildId,
+    channelId: session.channelId,
+    sources: session.sources,
+    bitrate: session.bitrate,
+    gainDb: session.gainDb,
+    loudness: session.loudness,
+  };
+}
+
 export async function handleApi(client: Client, req: IncomingMessage, url: URL): Promise<unknown> {
   const route = `${req.method} ${url.pathname}`;
 
@@ -295,46 +434,12 @@ export async function handleApi(client: Client, req: IncomingMessage, url: URL):
       const input = await body<{
         guildId: string;
         channelId: string;
-        source: SourceSpec;
+        source?: SourceSpec;
+        sources?: SourceSpec[];
         bitrate?: number;
+        loudness?: LoudnessMode;
       }>(req);
-
-      if (!input.guildId || !input.channelId) throw new ApiError(400, 'guildId and channelId are required.');
-      let source: SourceSpec;
-      try {
-        source = validateSource(input.source);
-      } catch (error) {
-        throw new ApiError(400, error instanceof Error ? error.message : String(error));
-      }
-      if (source.kind === 'dshow' && !IS_WINDOWS) {
-        throw new ApiError(400, 'DirectShow sources are Windows-only. Capture an app or a device instead.');
-      }
-      if (source.kind !== 'dshow' && !isAudioTapBuilt()) {
-        throw new ApiError(
-          409,
-          IS_WINDOWS
-            ? 'AudioTap is not built, so only DirectShow sources work. Build it from the Setup tab.'
-            : 'The PipeWire capture tools are missing, so nothing is capturable. Install pipewire-bin on Debian/Ubuntu or pipewire-utils on Fedora.',
-        );
-      }
-
-      if (input.bitrate !== undefined) {
-        try {
-          finiteNumber(input.bitrate, 'Bitrate', OPUS_MIN_BITRATE, OPUS_MAX_BITRATE);
-        } catch (error) {
-          throw new ApiError(400, error instanceof Error ? error.message : String(error));
-        }
-      }
-
-      const channel = requireChannel(client, input.guildId, input.channelId);
-      const bitrate = resolveBitrate(channel, input.bitrate);
-      const session = await startOrRetarget(channel, source, bitrate);
-      log.info('stream request completed', {
-        guild: input.guildId,
-        channel: input.channelId,
-        sourceKind: source.kind,
-        bitrate,
-      });
+      const session = await startFromRequest(client, input);
       return { session: session.status() };
     }
 
@@ -413,8 +518,90 @@ export async function handleApi(client: Client, req: IncomingMessage, url: URL):
       return { ready: client.isReady(), tag: client.user?.tag ?? null };
     }
 
-    case 'GET /api/diagnostics':
-      return { report: await collectDiagnostics() };
+    case 'GET /api/diagnostics': {
+      const report = collectReport();
+      // `report` is the plain-text rendering, kept so the copy button and older clients still work.
+      return { ...report, report: renderReport(report) };
+    }
+
+    case 'GET /api/now-playing':
+      return { nowPlaying: nowPlaying() };
+
+    case 'POST /api/sources/refresh':
+      // Nudges the resident monitor. Falls back to reporting that there is nothing to nudge, in
+      // which case the client's own reload of /api/sources does the job.
+      return { refreshed: sourceMonitor.refresh() };
+
+    case 'GET /api/presets':
+      return { presets: listPresets() };
+
+    case 'POST /api/presets': {
+      const { name, guildId } = await body<{ name: string; guildId?: string }>(req);
+      if (typeof name !== 'string' || !name.trim()) throw new ApiError(400, 'A saved route needs a name.');
+
+      // Saving captures whatever is live right now: that is the whole point, and it means the
+      // panel never has to serialise its own form state.
+      const sessions = allSessions();
+      const session = guildId ? getSession(guildId) : sessions[0];
+      if (!session) throw new ApiError(409, 'Start a stream first, then save it as a route.');
+
+      try {
+        return { preset: savePreset(name, routeFrom(session.status())) };
+      } catch (error) {
+        throw new ApiError(400, error instanceof Error ? error.message : String(error));
+      }
+    }
+
+    case 'POST /api/presets/apply': {
+      const { id } = await body<{ id: string }>(req);
+      const preset = typeof id === 'string' ? getPreset(id) : undefined;
+      if (!preset) throw new ApiError(404, 'That saved route no longer exists.');
+
+      const session = await startFromRequest(client, {
+        guildId: preset.guildId,
+        channelId: preset.channelId,
+        sources: preset.sources,
+        ...(preset.bitrate === undefined ? {} : { bitrate: preset.bitrate }),
+        ...(preset.gainDb === undefined ? {} : { gainDb: preset.gainDb }),
+        ...(preset.loudness === undefined ? {} : { loudness: preset.loudness }),
+      });
+      touchPreset(preset.id);
+      log.info(`applied saved route "${preset.name}"`);
+      return { session: session.status(), presets: listPresets() };
+    }
+
+    case 'POST /api/presets/delete': {
+      const { id } = await body<{ id: string }>(req);
+      if (typeof id !== 'string') throw new ApiError(400, 'id is required.');
+      return { deleted: deletePreset(id), presets: listPresets() };
+    }
+
+    case 'POST /api/loudness': {
+      const { guildId, mode } = await body<{ guildId: string; mode: LoudnessMode }>(req);
+      const session = getSession(guildId);
+      if (!session) throw new ApiError(404, 'Nothing is streaming in that server.');
+      if (!LOUDNESS_MODES.includes(mode)) {
+        throw new ApiError(400, `Loudness must be one of ${LOUDNESS_MODES.join(', ')}.`);
+      }
+      await session.setLoudness(mode);
+      return { session: session.status() };
+    }
+
+    case 'POST /api/input-gain': {
+      const { guildId, index, db } = await body<{ guildId: string; index: number; db: number }>(req);
+      const session = getSession(guildId);
+      if (!session) throw new ApiError(404, 'Nothing is streaming in that server.');
+      if (!Number.isInteger(index) || index < 0 || index >= session.sources.length) {
+        throw new ApiError(400, 'That mix input does not exist.');
+      }
+      try {
+        finiteNumber(db, 'Gain', -60, 20);
+        await session.setInputGain(index, db);
+      } catch (error) {
+        throw new ApiError(400, error instanceof Error ? error.message : String(error));
+      }
+      return { session: session.status() };
+    }
 
     case 'GET /api/config':
       return { ...readConfig(), restartRequired: RESTART_REQUIRED_KEYS };

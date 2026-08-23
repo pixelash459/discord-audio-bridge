@@ -15,22 +15,26 @@ Worth knowing before you audit or deploy it:
 **The bot token comes from the environment configuration.** In a development checkout it normally
 lives in `.env`; a read-only package writes the editable file under the per-user runtime state
 directory. It is never returned by the control API—reads report only whether a token is set.
-Configuration inputs are type/range checked and safely quoted before writing. Environment files and
-runtime tokens are gitignored and tightened to user-only filesystem permissions where supported.
+Configuration inputs are type/range checked and safely quoted before writing. Executable settings
+must name ffmpeg/AudioTap and existing path values are verified; logs cannot escape the runtime
+directory. Environment files and runtime tokens are gitignored and tightened to user-only
+filesystem permissions, including an explicit current-user ACL on Windows.
 
 **The control panel listens on a socket.** It binds to `127.0.0.1` only, never `0.0.0.0`, so it is
 not reachable from the network. Loopback is not authentication on its own, so every `/api` request
 and WebSocket upgrade also requires a token minted at startup and written to `.control-token`
 (also gitignored). It is delivered in a URL fragment, stripped from the address bar, and then sent
-in an Authorization header rather than in request URLs. An authenticated exchange creates an
-HttpOnly, same-origin, session-scoped cookie for WebSocket handshakes. Static assets are served
-without a token because they contain nothing secret.
+in an Authorization header rather than in request URLs. An authenticated exchange creates a random,
+single-use WebSocket ticket that expires after 30 seconds. The durable token is never put in a
+localhost cookie because browser cookies are shared across ports. Static assets are served without
+a token because they contain nothing secret.
 
 Set `CONTROL_PORT=0` to disable the local panel entirely and use slash commands and/or the
 restricted remote dashboard.
 
-**The remote dashboard is intentionally network-reachable.** By default it binds to `0.0.0.0:8788`
-for LAN and Tailscale access. It uses a separate persistent token in `.remote-token`. Its API can
+**The remote dashboard is opt-in and intentionally network-reachable when enabled.** Fresh installs
+use `REMOTE_PORT=0`, `REMOTE_HOST=127.0.0.1`, and `REMOTE_TRUST_TAILSCALE=false`. Enabling it uses a
+separate persistent token in `.remote-token`. Its API can
 enumerate host capture sources and the bot's Discord servers/voice channels; start or retarget a
 stream; and control mute, stop, gain, and bitrate. It cannot access setup, environment files, bot
 credentials, native builds, diagnostics, channel-bitrate changes, or command registration. Process
@@ -64,13 +68,12 @@ or render endpoint and takes no network action. On Linux, application capture ta
 PipeWire output-stream node and device capture resolves to a sink monitor; the bridge never launches
 a bare `pw-record` command that could default to the microphone.
 
-**Slash commands do not check who is asking**, beyond Discord's own permission model. Anyone who
-can use the bot's commands in your server can start, stop, and retarget a stream, and can see the
-names of applications running on the host machine via autocomplete. If that matters, restrict the
-commands in Server Settings → Integrations.
+**Slash commands are administrator-only by default and at runtime.** This includes autocomplete and
+message-component controls because they can enumerate or capture host applications. Server owners
+can still restrict command visibility further in Server Settings → Integrations.
 
 ## Scope
 
 Out of scope: anything requiring an attacker to already have code execution on the host machine, or
-to already possess the bot token, local control token, or remote control token. Reports about the
-Tailscale trust mode must assume the documented personal/controlled-tailnet threat model.
+to already possess a correctly protected bot/local/remote token without a project-provided route to
+obtain it. Tailscale trust is explicitly opt-in and assumes a personal/controlled tailnet.

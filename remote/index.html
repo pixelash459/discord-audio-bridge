@@ -2,23 +2,45 @@
 <html lang="en">
   <head>
     <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
     <meta name="color-scheme" content="dark" />
+    <meta name="theme-color" content="#0f1115" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
     <title>Bridge Remote</title>
+    <link rel="manifest" href="/manifest.webmanifest" />
+    <link rel="icon" href="/icon.svg" />
+    <link rel="apple-touch-icon" href="/icon.svg" />
     <link rel="stylesheet" href="/style.css" />
   </head>
   <body>
     <a class="skip-link" href="#remote-main">Skip to stream controls</a>
+
+    <div id="offline" class="offline" role="status" aria-live="polite" hidden>
+      Lost contact with the host. Retrying…
+    </div>
+
     <header>
       <div>
         <p class="eyebrow">Discord Audio Bridge</p>
         <h1>Your listening room</h1>
         <p class="lede">Move the host's audio without touching the host.</p>
       </div>
-      <div class="connection" role="status" aria-live="polite"><span id="dot" class="dot"></span><span id="status">Connecting</span></div>
+      <div class="header-actions">
+        <div class="connection" role="status" aria-live="polite"><span id="dot" class="dot"></span><span id="status">Connecting</span></div>
+        <button id="forget-device" class="quiet" type="button">Forget this device</button>
+      </div>
     </header>
 
     <main id="remote-main">
+      <section id="host-track" class="host-track" hidden>
+        <img id="host-art" class="host-art" alt="" src="data:image/gif;base64,R0lGODlhAQABAAAAACH5BAEKAAEALAAAAAABAAEAAAICTAEAOw==" hidden />
+        <div>
+          <p class="eyebrow">Playing on the host</p>
+          <h2 id="host-title">—</h2>
+        </div>
+      </section>
+
       <section class="route-card" aria-labelledby="route-title">
         <div class="route-head">
           <div>
@@ -31,14 +53,26 @@
           <label class="field"><span>Server</span><select id="guild"></select></label>
           <label class="field"><span>Voice channel</span><select id="channel"></select></label>
         </div></div>
-        <div class="route-group"><div class="group-title"><span>2</span><strong>Host audio source</strong></div><div class="route-grid">
-          <label class="field"><span>Source type</span><select id="source-kind">
-            <option value="process">Application</option>
-            <option value="device">Output device</option>
-            <option value="dshow">Cable / DirectShow</option>
-          </select></label>
-          <label class="field"><span>Source</span><select id="source"></select></label>
-        </div></div>
+        <div class="route-group">
+          <div class="group-title"><span>2</span><strong>Host audio source</strong></div>
+          <div class="route-grid">
+            <label class="field"><span>Source type</span><select id="source-kind">
+              <option value="process">Application</option>
+              <option value="device">Output device</option>
+              <option value="dshow">Cable / DirectShow</option>
+            </select></label>
+          </div>
+          <input
+            id="source-filter"
+            class="source-filter"
+            type="search"
+            placeholder="Filter sources…"
+            aria-label="Filter sources"
+            autocomplete="off"
+          />
+          <!-- Large tap targets rather than a dropdown: this page is used one-handed on a phone. -->
+          <div id="source" class="source-tiles" role="group" aria-label="Host audio source"></div>
+        </div>
         <p id="route-hint" class="route-hint"></p>
         <button id="apply-route" class="apply" type="button">Start stream</button>
       </section>
@@ -52,6 +86,49 @@
     </main>
 
     <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
+
+    <!--
+      A silent loop is the documented way to hold audio focus without playing anything, which is
+      what the Media Session API needs before a phone will show lock-screen controls. It lets the
+      play/pause button on a locked screen mute and unmute the bridge.
+    -->
+    <audio id="focus-loop" loop preload="auto" aria-hidden="true"></audio>
+
+    <template id="session-template">
+      <article class="card">
+        <div class="card-head">
+          <div class="card-title">
+            <img class="session-art" alt="" src="data:image/gif;base64,R0lGODlhAQABAAAAACH5BAEKAAEALAAAAAABAAEAAAICTAEAOw==" hidden />
+            <div><h2>Stream</h2><p class="subtitle">Loading…</p></div>
+          </div>
+          <span class="badge"></span>
+        </div>
+
+        <div class="meters">
+          <div class="meter-row"><span>L</span><div class="meter"><div class="meter-fill meter-l"></div></div></div>
+          <div class="meter-row"><span>R</span><div class="meter"><div class="meter-fill meter-r"></div></div></div>
+        </div>
+        <p class="alert clip-note" hidden>Clipping — lower the gain.</p>
+        <p class="alert silent-note" hidden>No sound is reaching the bridge.</p>
+
+        <div class="stats">
+          <div class="stat"><span>Player</span><strong class="player"></strong></div>
+          <div class="stat"><span>Bitrate</span><strong class="bitrate-stat"></strong></div>
+          <div class="stat"><span>Capture</span><strong class="capture"></strong></div>
+          <div class="stat"><span>Listeners</span><strong class="listeners"></strong></div>
+        </div>
+
+        <div class="controls">
+          <div class="control"><label class="slider-label">Gain <span class="gain-value"></span></label><input class="gain" type="range" min="-60" max="20" step="0.5" aria-label="Capture gain" /></div>
+          <div class="control"><label class="slider-label">Opus bitrate <span class="bitrate-value"></span></label><input class="bitrate" type="range" min="8" step="8" aria-label="Opus bitrate" /></div>
+        </div>
+
+        <div class="mix-inputs" hidden></div>
+
+        <div class="actions"><button class="mute secondary" type="button">Mute bot</button><button class="stop danger" type="button">Stop</button></div>
+      </article>
+    </template>
+
     <script type="module" src="/app.js"></script>
   </body>
 </html>

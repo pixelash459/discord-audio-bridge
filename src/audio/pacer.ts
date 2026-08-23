@@ -214,6 +214,7 @@ export class Pacer {
         this.#write(head.subarray(0, toWrite), true);
         toWrite = 0;
       }
+      if (this.#backpressured) return;
     }
   }
 
@@ -240,7 +241,9 @@ export class Pacer {
   #scale(chunk: Buffer): Buffer {
     const source = alignedCopy(chunk);
     const samples = new Float32Array(source.buffer, source.byteOffset, source.length >> 2);
-    const out = Buffer.allocUnsafeSlow(chunk.length);
+    // Alignment is guaranteed by #push, but zero-initialising the tail keeps this helper safe if
+    // a future caller ever passes a partial sample.
+    const out = Buffer.alloc(chunk.length);
     const target = new Float32Array(out.buffer, 0, samples.length);
     for (let i = 0; i < samples.length; i++) target[i] = samples[i]! * this.#gain;
     return out;

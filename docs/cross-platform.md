@@ -17,7 +17,7 @@ Per-app capture is a native-API problem, so each platform uses its native answer
 | Pacing, silence fill, drift trim | `PacedWriter.cs` inside AudioTap | `src/audio/pacer.ts` in the bot |
 | Metering | reported by AudioTap 5×/s | computed in the pacer (every sample passes through) |
 | "Everything but this app" | yes (`PROCESS_LOOPBACK_MODE_EXCLUDE_TARGET`) | not offered by PipeWire; rejected with a clear error |
-| Enumeration | `AudioTap --list-processes/--list-devices` | `pw-dump` (stream nodes and sinks) |
+| Enumeration | one resident `AudioTap --monitor --with-icons` event feed | coalesced `pw-dump` queries (stream nodes and sinks) |
 
 PipeWire exposes every application's playback stream as its own node, which is why Linux needs
 no custom capture binary at all: `pw-record --raw --rate 48000 --channels 2 --format f32 --target
@@ -142,7 +142,8 @@ contains `Stream/Output/Audio` and `Audio/Sink` nodes in the same terminal sessi
 For a checkout, fill in `.env`, run `npm start`, and open the printed loopback URL. Verify that application and
 device sources render, a stream joins the chosen voice channel, meters move, gain and Opus bitrate
 changes take effect, and **Mute bot** changes the bot's Discord voice state. From another LAN or
-Tailscale device, open one of the printed remote URLs and verify source/destination selection,
+Tailscale device, first opt in with `REMOTE_PORT=8788` and an intentional `REMOTE_HOST`, then open
+one of the printed remote URLs and verify source/destination selection,
 retargeting, mute, gain, bitrate, and stop.
 
 With `REMOTE_TRUST_TAILSCALE=true`, also confirm `tailscale whois --json <client-ip>` succeeds on the

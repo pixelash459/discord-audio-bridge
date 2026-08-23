@@ -45,18 +45,70 @@ const post = (path, data) => api(path, { method: 'POST', body: JSON.stringify(da
 
 const ui = {
   sourceKind: 'process',
-  selected: null, // { kind, ... , label }
+  /** Selected source keys, in the order they were picked: that order is the mixer's lane order. */
+  selected: [],
+  mixing: false,
+  filter: '',
   guildId: null,
   channelId: null,
   sources: { processes: [], devices: [], dshow: [], audioTapBuilt: false },
   guilds: [],
+  presets: [],
   state: null,
   logFilter: 'info',
-  // Suppress snapshot-driven writes while a slider is being dragged.
+  logSearch: '',
+  // Suppress snapshot-driven writes while a control is being dragged or edited.
   dragging: new Set(),
 };
 
 const RANK = { error: 0, warn: 1, info: 2, debug: 3 };
+
+let artworkTrackKey = '';
+let artwork = null;
+let artworkRequest = 0;
+
+const trackKey = (track) =>
+  track ? [track.appId, track.title, track.artist, track.album].map((part) => part ?? '').join('\u001f') : '';
+
+function setArtwork(element, track) {
+  const value = trackKey(track) === artworkTrackKey ? artwork : null;
+  if (value) {
+    element.src = `data:image/png;base64,${value}`;
+    element.hidden = false;
+  } else {
+    element.hidden = true;
+    element.removeAttribute('src');
+  }
+}
+
+function refreshArtworkViews() {
+  if (!ui.state) return;
+  setArtwork($('host-art'), ui.state.nowPlaying);
+  for (const session of ui.state.sessions) {
+    const card = cards.get(session.guildId);
+    if (card) setArtwork(card.querySelector('.session-art'), session.nowPlaying);
+  }
+}
+
+function ensureArtwork(track) {
+  const key = trackKey(track);
+  if (key === artworkTrackKey) return;
+  artworkTrackKey = key;
+  artwork = null;
+  const request = ++artworkRequest;
+  refreshArtworkViews();
+  if (!key) return;
+
+  void api('now-playing')
+    .then(({ nowPlaying: current }) => {
+      if (request !== artworkRequest || trackKey(current) !== artworkTrackKey) return;
+      artwork = current?.artwork ?? null;
+      refreshArtworkViews();
+    })
+    .catch(() => {
+      /* Artwork is optional; the metadata and controls remain useful without it. */
+    });
+}
 
 /* ── toast ────────────────────────────────────────────────────────────────── */
 
@@ -84,13 +136,25 @@ function duration(ms) {
 
 const kbps = (bits) => `${Math.round(bits / 1000)} kbps`;
 
-/** Maps dBFS onto meter width. -60 dB is the floor; below that reads as nothing. */
+/**
+ * Maps dBFS onto meter width.
+ *
+ * Not linear in dB: the range that matters for music is roughly -24..0, and a straight -60..0 map
+ * squashes all of it into the last third of the bar. Weighting the top end gives the part people
+ * actually read most of the width, which is what a hardware meter does too.
+ */
 function meterWidth(db) {
   if (!Number.isFinite(db) || db <= -60) return 0;
-  return Math.min(100, ((db + 60) / 60) * 100);
+  const normalised = Math.min(1, Math.max(0, (db + 60) / 60));
+  return Math.min(100, Math.pow(normalised, 1.7) * 100);
 }
 
 const formatDb = (db) => (!Number.isFinite(db) || db <= -99 ? '−∞' : `${db.toFixed(1)}`);
+
+function trackTitle(track) {
+  if (!track?.title) return null;
+  return track.artist ? `${track.artist} — ${track.title}` : track.title;
+}
 
 /* ── tabs ─────────────────────────────────────────────────────────────────── */
 
@@ -131,6 +195,38 @@ document.addEventListener('click', (event) => {
   if (goto) showTab(goto.dataset.goto);
 });
 
+/* ── keyboard shortcuts ───────────────────────────────────────────────────── */
+
+// A background audio tool should not need the mouse for the two things you do most.
+document.addEventListener('keydown', (event) => {
+  const typing = /^(INPUT|TEXTAREA|SELECT)$/.test(event.target.tagName) || event.target.isContentEditable;
+  if (event.metaKey || event.ctrlKey || event.altKey) return;
+
+  if (event.key === '/' && !typing) {
+    event.preventDefault();
+    showTab('stream');
+    $('source-filter').focus();
+    return;
+  }
+  if (typing) return;
+
+  if (['1', '2', '3'].includes(event.key)) {
+    showTab({ 1: 'stream', 2: 'setup', 3: 'logs' }[event.key]);
+    return;
+  }
+
+  const live = primarySession();
+  if (!live) return;
+  if (event.key.toLowerCase() === 'm') {
+    event.preventDefault();
+    void post('mute', { guildId: live.guildId, muted: !live.muted }).catch(fail);
+  }
+  if (event.key.toLowerCase() === 's') {
+    event.preventDefault();
+    void post('stop', { guildId: live.guildId }).then(() => toast('Stopped.')).catch(fail);
+  }
+});
+
 /* ── sources ──────────────────────────────────────────────────────────────── */
 
 const SOURCE_HINTS = {
@@ -146,11 +242,24 @@ document.querySelector('.seg').addEventListener('click', (event) => {
   if (!button) return;
 
   ui.sourceKind = button.dataset.source;
-  ui.selected = null;
+  ui.selected = [];
   for (const b of document.querySelectorAll('.seg-btn')) {
     b.classList.toggle('active', b === button);
     b.setAttribute('aria-pressed', String(b === button));
   }
+  renderSources();
+});
+
+$('source-filter').addEventListener('input', (event) => {
+  ui.filter = event.target.value.trim().toLowerCase();
+  renderSources();
+});
+
+$('mix-toggle').addEventListener('change', (event) => {
+  ui.mixing = event.target.checked;
+  // Cable inputs go straight into ffmpeg and never reach the summing stage, so they cannot mix.
+  if (ui.mixing && ui.sourceKind === 'dshow') ui.selected = ui.selected.slice(0, 1);
+  if (!ui.mixing) ui.selected = ui.selected.slice(0, 1);
   renderSources();
 });
 
@@ -159,6 +268,8 @@ async function loadSources() {
   refresh.disabled = true;
   refresh.textContent = 'Refreshing…';
   try {
+    // Nudge the resident monitor first so the list we then read is genuinely current.
+    await post('sources/refresh').catch(() => undefined);
     ui.sources = await api('sources');
     renderSources();
   } catch (error) {
@@ -169,6 +280,37 @@ async function loadSources() {
   }
 }
 
+function availableItems() {
+  if (ui.sourceKind === 'process') {
+    return ui.sources.processes.map((p) => ({
+      key: `process:${p.pid}`,
+      label: p.displayName || p.name,
+      meta: `pid ${p.pid}`,
+      icon: p.icon ?? null,
+      active: p.state === 'AudioSessionStateActive' || p.state === 'Active',
+      source: { kind: 'process', pid: p.pid, processName: p.name, exclude: false, label: p.displayName || p.name },
+    }));
+  }
+  if (ui.sourceKind === 'device') {
+    return ui.sources.devices.map((d) => ({
+      key: `device:${d.id}`,
+      label: `${d.isDefault ? '★ ' : ''}${d.name}`,
+      meta: `${d.sampleRate / 1000} kHz`,
+      icon: null,
+      active: false,
+      source: { kind: 'device', id: d.id, label: d.name },
+    }));
+  }
+  return ui.sources.dshow.map((d) => ({
+    key: `dshow:${d.name}`,
+    label: d.name,
+    meta: '',
+    icon: null,
+    active: false,
+    source: { kind: 'dshow', name: d.name, label: d.name },
+  }));
+}
+
 function renderSources() {
   $('source-hint').textContent = SOURCE_HINTS[ui.sourceKind];
   $('tap-missing').hidden = ui.sources.audioTapBuilt || ui.sourceKind === 'dshow';
@@ -177,41 +319,28 @@ function renderSources() {
       'The PipeWire capture tools are missing, so per-app capture is unavailable. Install them on the host (for example, "apt install pipewire-bin"), then restart the bridge.';
   }
 
+  const mixable = ui.sourceKind !== 'dshow';
+  $('mix-toggle').disabled = !mixable;
+  $('mix-hint').hidden = !(ui.mixing && mixable);
+
   const list = $('source-list');
   list.replaceChildren();
 
-  const items =
-    ui.sourceKind === 'process'
-      ? ui.sources.processes.map((p) => ({
-          key: `process:${p.pid}`,
-          label: p.name,
-          meta: `pid ${p.pid}`,
-          active: p.state === 'AudioSessionStateActive' || p.state === 'Active',
-          source: { kind: 'process', pid: p.pid, exclude: false, label: p.name },
-        }))
-      : ui.sourceKind === 'device'
-        ? ui.sources.devices.map((d) => ({
-            key: `device:${d.id}`,
-            label: `${d.isDefault ? '★ ' : ''}${d.name}`,
-            meta: `${d.sampleRate / 1000} kHz`,
-            active: false,
-            source: { kind: 'device', id: d.id, label: d.name },
-          }))
-        : ui.sources.dshow.map((d) => ({
-            key: `dshow:${d.name}`,
-            label: d.name,
-            meta: '',
-            active: false,
-            source: { kind: 'dshow', name: d.name, label: d.name },
-          }));
+  const all = availableItems();
+  const items = ui.filter
+    ? all.filter((item) => item.label.toLowerCase().includes(ui.filter) || item.meta.toLowerCase().includes(ui.filter))
+    : all;
 
-  if (ui.selected && !items.some((item) => item.key === ui.selected.key)) ui.selected = null;
+  // Drop selections whose source has gone away, but keep the order of the ones that remain.
+  const keys = new Set(all.map((item) => item.key));
+  ui.selected = ui.selected.filter((key) => keys.has(key));
 
   if (items.length === 0) {
     const empty = document.createElement('div');
     empty.className = 'empty';
-    empty.textContent =
-      ui.sourceKind === 'process'
+    empty.textContent = ui.filter
+      ? `Nothing matches “${ui.filter}”.`
+      : ui.sourceKind === 'process'
         ? 'No app is playing audio right now. Start playback and hit Refresh.'
         : 'Nothing found.';
     list.append(empty);
@@ -220,13 +349,20 @@ function renderSources() {
   }
 
   for (const item of items) {
+    const position = ui.selected.indexOf(item.key);
     const button = document.createElement('button');
     button.type = 'button';
     button.className = 'source';
-    button.classList.toggle('selected', ui.selected?.key === item.key);
-    button.setAttribute('aria-pressed', String(ui.selected?.key === item.key));
+    button.classList.toggle('selected', position >= 0);
+    button.setAttribute('aria-pressed', String(position >= 0));
 
-    if (item.active) {
+    if (item.icon) {
+      const icon = document.createElement('img');
+      icon.className = 'source-icon';
+      icon.alt = '';
+      icon.src = `data:image/png;base64,${item.icon}`;
+      button.append(icon);
+    } else if (item.active) {
       const dot = document.createElement('span');
       dot.className = 'playing-dot';
       button.append(dot);
@@ -237,6 +373,12 @@ function renderSources() {
     name.textContent = item.label;
     button.append(name);
 
+    if (item.active && item.icon) {
+      const playing = document.createElement('span');
+      playing.className = 'playing-dot inline';
+      button.append(playing);
+    }
+
     if (item.meta) {
       const meta = document.createElement('span');
       meta.className = 'source-meta';
@@ -244,8 +386,25 @@ function renderSources() {
       button.append(meta);
     }
 
+    // In mix mode the badge is the lane number, which is also the order the mixer will use.
+    if (ui.mixing && position >= 0) {
+      const badge = document.createElement('span');
+      badge.className = 'source-badge';
+      badge.textContent = String(position + 1);
+      button.append(badge);
+    }
+
     button.addEventListener('click', () => {
-      ui.selected = item;
+      if (!ui.mixing) {
+        ui.selected = position >= 0 ? [] : [item.key];
+      } else if (position >= 0) {
+        ui.selected.splice(position, 1);
+      } else if (ui.selected.length >= 4) {
+        toast('Four sources is the limit for one mix.', 'error');
+        return;
+      } else {
+        ui.selected.push(item.key);
+      }
       renderSources();
     });
 
@@ -254,11 +413,25 @@ function renderSources() {
   updateStartButton();
 }
 
+function selectedSources() {
+  const byKey = new Map(availableItems().map((item) => [item.key, item]));
+  return ui.selected.map((key) => byKey.get(key)).filter(Boolean);
+}
+
 function updateStartButton() {
   const button = $('start-btn');
-  const ready = Boolean(ui.selected && ui.guildId && ui.channelId);
+  const chosen = selectedSources();
+  const ready = chosen.length > 0 && ui.guildId && ui.channelId;
   button.disabled = !ready;
-  button.textContent = !ui.selected ? 'Choose a source' : session() ? 'Apply route' : 'Start stream';
+  button.textContent =
+    chosen.length === 0
+      ? 'Choose a source'
+      : primarySession()
+        ? 'Apply route'
+        : chosen.length > 1
+          ? `Start mix of ${chosen.length}`
+          : 'Start stream';
+  $('save-route-btn').disabled = !primarySession();
 }
 
 /* ── destination ──────────────────────────────────────────────────────────── */
@@ -284,6 +457,8 @@ function renderGuilds() {
   const previous = ui.guildId;
 
   guildSelect.replaceChildren();
+  $('no-guilds').hidden = ui.guilds.length > 0;
+
   if (ui.guilds.length === 0) {
     guildSelect.append(new Option('The bot is not in any server yet', ''));
     $('channel-select').replaceChildren(new Option('—', ''));
@@ -389,7 +564,8 @@ $('maximize-btn').addEventListener('click', async () => {
 /* ── streaming ────────────────────────────────────────────────────────────── */
 
 async function startStream() {
-  if (!ui.selected) return;
+  const chosen = selectedSources();
+  if (chosen.length === 0) return;
   if (!ui.guildId || !ui.channelId) {
     toast('Pick a server and a voice channel first.', 'error');
     return;
@@ -399,82 +575,387 @@ async function startStream() {
     await post('stream', {
       guildId: ui.guildId,
       channelId: ui.channelId,
-      source: ui.selected.source,
+      sources: chosen.map((item) => item.source),
     });
-    toast(`Streaming ${ui.selected.label}.`, 'ok');
+    toast(`Streaming ${chosen.map((item) => item.label).join(' + ')}.`, 'ok');
   } catch (error) {
     fail(error);
   }
 }
 
 $('start-btn').addEventListener('click', () => void startStream());
-
-$('stop-btn').addEventListener('click', async () => {
-  const live = session();
-  if (!live) return;
-  try {
-    await post('stop', { guildId: live.guildId });
-    ui.selected = null;
-    renderSources();
-    toast('Stopped.');
-  } catch (error) {
-    fail(error);
-  }
-});
-
-$('mute-btn').addEventListener('click', async () => {
-  const live = session();
-  if (!live) return;
-  const button = $('mute-btn');
-  button.disabled = true;
-  try {
-    await post('mute', { guildId: live.guildId, muted: !live.muted });
-  } catch (error) {
-    fail(error);
-  } finally {
-    button.disabled = false;
-  }
-});
-
 $('refresh-btn').addEventListener('click', () => void loadSources());
 
-// Sliders: track drag state so incoming snapshots do not yank the thumb, and only commit on release.
-for (const [id, handler] of [
-  ['gain', (value) => post('gain', { guildId: session()?.guildId, db: value })],
-  ['bitrate', (value) => post('bitrate', { guildId: session()?.guildId, bitrate: value * 1000 })],
-]) {
-  const input = $(id);
-  input.addEventListener('pointerdown', () => ui.dragging.add(id));
-  input.addEventListener('input', () => {
-    if (id === 'gain') $('gain-value').textContent = `${Number(input.value).toFixed(1)} dB`;
-    else $('bitrate-value').textContent = `${input.value} kbps`;
-  });
-  const commit = async () => {
-    ui.dragging.delete(id);
-    if (!session()) return;
+const primarySession = () => {
+  const sessions = ui.state?.sessions ?? [];
+  return (ui.guildId ? sessions.find((item) => item.guildId === ui.guildId) : null) ?? sessions[0] ?? null;
+};
+
+/* ── saved routes ─────────────────────────────────────────────────────────── */
+
+async function loadPresets() {
+  try {
+    ui.presets = (await api('presets')).presets ?? [];
+    renderPresets();
+  } catch (error) {
+    fail(error);
+  }
+}
+
+function renderPresets() {
+  const list = $('preset-list');
+  list.replaceChildren();
+
+  if (ui.presets.length === 0) {
+    const empty = document.createElement('p');
+    empty.className = 'muted small';
+    empty.textContent = 'No saved routes yet. Start a stream, then press “Save current route”.';
+    list.append(empty);
+    return;
+  }
+
+  for (const preset of ui.presets) {
+    const chip = document.createElement('div');
+    chip.className = 'preset';
+
+    const apply = document.createElement('button');
+    apply.type = 'button';
+    apply.className = 'preset-apply';
+    apply.textContent = preset.name;
+
+    const detail = document.createElement('span');
+    detail.className = 'preset-detail';
+    detail.textContent = `${preset.sources.map((source) => source.label).join(' + ')} · ${
+      preset.bitrate ? kbps(preset.bitrate) : 'channel bitrate'
+    }`;
+    apply.append(detail);
+
+    apply.addEventListener('click', async () => {
+      apply.disabled = true;
+      try {
+        const result = await post('presets/apply', { id: preset.id });
+        ui.presets = result.presets ?? ui.presets;
+        renderPresets();
+        toast(`Applied “${preset.name}”.`, 'ok');
+      } catch (error) {
+        fail(error);
+      } finally {
+        apply.disabled = false;
+      }
+    });
+
+    const remove = document.createElement('button');
+    remove.type = 'button';
+    remove.className = 'preset-delete';
+    remove.title = `Delete ${preset.name}`;
+    remove.setAttribute('aria-label', `Delete ${preset.name}`);
+    remove.textContent = '×';
+    remove.addEventListener('click', async () => {
+      try {
+        const result = await post('presets/delete', { id: preset.id });
+        ui.presets = result.presets ?? [];
+        renderPresets();
+      } catch (error) {
+        fail(error);
+      }
+    });
+
+    chip.append(apply, remove);
+    list.append(chip);
+  }
+}
+
+$('save-route-btn').addEventListener('click', async () => {
+  const live = primarySession();
+  if (!live) return;
+  const suggestion = `${live.source.label} → ${live.channelName}`;
+  const name = prompt('Name this route', suggestion.slice(0, 60));
+  if (!name) return;
+  try {
+    await post('presets', { name, guildId: live.guildId });
+    await loadPresets();
+    toast(`Saved “${name}”.`, 'ok');
+  } catch (error) {
+    fail(error);
+  }
+});
+
+/* ── live session cards ───────────────────────────────────────────────────── */
+
+const cards = new Map();
+/** 60 seconds of buffer-fill and ping per guild, for the trend strip. */
+const history = new Map();
+
+function trendFor(guildId) {
+  let series = history.get(guildId);
+  if (!series) {
+    series = { buffer: [], ping: [] };
+    history.set(guildId, series);
+  }
+  return series;
+}
+
+function drawTrend(canvas, series) {
+  const context = canvas.getContext('2d');
+  if (!context) return;
+  const { width, height } = canvas;
+  context.clearRect(0, 0, width, height);
+
+  const styles = getComputedStyle(document.body);
+  const line = (values, colour, max) => {
+    if (values.length < 2) return;
+    context.strokeStyle = colour;
+    context.lineWidth = 1.5;
+    context.beginPath();
+    values.forEach((value, index) => {
+      const x = (index / (values.length - 1)) * width;
+      const y = height - Math.min(1, value / max) * (height - 4) - 2;
+      if (index === 0) context.moveTo(x, y);
+      else context.lineTo(x, y);
+    });
+    context.stroke();
+  };
+
+  line(series.buffer, styles.getPropertyValue('--accent').trim() || '#6874f7', 400);
+  line(series.ping, styles.getPropertyValue('--warn').trim() || '#faa61a', 200);
+}
+
+function buildCard(guildId) {
+  const node = $('session-template').content.firstElementChild.cloneNode(true);
+  const pick = (selector) => node.querySelector(selector);
+
+  pick('.stop-btn').addEventListener('click', async () => {
     try {
-      await handler(Number(input.value));
+      await post('stop', { guildId });
+      toast('Stopped.');
     } catch (error) {
       fail(error);
     }
-  };
-  input.addEventListener('change', commit);
+  });
+
+  pick('.mute-btn').addEventListener('click', async (event) => {
+    const button = event.currentTarget;
+    button.disabled = true;
+    try {
+      const live = (ui.state?.sessions ?? []).find((item) => item.guildId === guildId);
+      await post('mute', { guildId, muted: !live?.muted });
+    } catch (error) {
+      fail(error);
+    } finally {
+      button.disabled = false;
+    }
+  });
+
+  pick('.loudness').addEventListener('change', async (event) => {
+    try {
+      await post('loudness', { guildId, mode: event.target.value });
+      toast(`Loudness set to ${event.target.value}.`, 'ok');
+    } catch (error) {
+      fail(error);
+    }
+  });
+
+  // Sliders: track drag state so incoming snapshots do not yank the thumb, and commit on release.
+  for (const [selector, handler, format] of [
+    ['.gain', (value) => post('gain', { guildId, db: value }), (input, card) => {
+      card.querySelector('.gain-value').textContent = `${Number(input.value).toFixed(1)} dB`;
+    }],
+    ['.bitrate', (value) => post('bitrate', { guildId, bitrate: value * 1000 }), (input, card) => {
+      card.querySelector('.bitrate-value').textContent = `${input.value} kbps`;
+    }],
+  ]) {
+    const input = pick(selector);
+    const key = `${guildId}${selector}`;
+    input.addEventListener('pointerdown', () => ui.dragging.add(key));
+    input.addEventListener('input', () => format(input, node));
+    input.addEventListener('change', async () => {
+      ui.dragging.delete(key);
+      try {
+        await handler(Number(input.value));
+      } catch (error) {
+        fail(error);
+      }
+    });
+  }
+
+  $('sessions').append(node);
+  cards.set(guildId, node);
+  return node;
 }
 
-const session = () => {
-  const sessions = ui.state?.sessions ?? [];
-  return ui.guildId ? sessions.find((item) => item.guildId === ui.guildId) ?? null : sessions[0] ?? null;
-};
+function renderMixInputs(card, session) {
+  const container = card.querySelector('.mix-inputs');
+  const mix = session.mix;
+  if (!mix || mix.length < 2) {
+    container.hidden = true;
+    container.replaceChildren();
+    return;
+  }
+
+  container.hidden = false;
+  // Rebuild only when the shape changes; otherwise just refresh the numbers, so a slider being
+  // dragged is not replaced underneath the pointer.
+  if (container.childElementCount !== mix.length) {
+    container.replaceChildren();
+    mix.forEach((input, index) => {
+      const row = document.createElement('label');
+      row.className = 'control mix-input';
+
+      const label = document.createElement('span');
+      label.className = 'label';
+      label.append(document.createTextNode(`${input.label} `));
+      const value = document.createElement('span');
+      value.className = 'mix-value';
+      label.append(value);
+
+      const slider = document.createElement('input');
+      slider.type = 'range';
+      slider.min = '-60';
+      slider.max = '20';
+      slider.step = '0.5';
+      slider.className = 'mix-gain';
+
+      const key = `${session.guildId}:mix:${index}`;
+      slider.addEventListener('pointerdown', () => ui.dragging.add(key));
+      slider.addEventListener('input', () => (value.textContent = `${Number(slider.value).toFixed(1)} dB`));
+      slider.addEventListener('change', async () => {
+        ui.dragging.delete(key);
+        try {
+          await post('input-gain', { guildId: session.guildId, index, db: Number(slider.value) });
+        } catch (error) {
+          fail(error);
+        }
+      });
+
+      row.append(label, slider);
+      container.append(row);
+    });
+  }
+
+  mix.forEach((input, index) => {
+    const row = container.children[index];
+    if (!row) return;
+    row.classList.toggle('stopped', !input.live);
+    if (ui.dragging.has(`${session.guildId}:mix:${index}`)) return;
+    row.querySelector('.mix-gain').value = String(input.gainDb);
+    row.querySelector('.mix-value').textContent = `${input.gainDb.toFixed(1)} dB${input.live ? '' : ' · stopped'}`;
+  });
+}
+
+function renderSession(session) {
+  const card = cards.get(session.guildId) ?? buildCard(session.guildId);
+  const pick = (selector) => card.querySelector(selector);
+  const track = trackTitle(session.nowPlaying);
+
+  pick('.session-source').textContent = track ?? session.sources.map((s) => s.label).join(' + ');
+  pick('.session-sub').textContent = track
+    ? `${session.sources.map((s) => s.label).join(' + ')} → ${session.channelName}`
+    : `into ${session.channelName}`;
+
+  setArtwork(pick('.session-art'), session.nowPlaying);
+
+  const listeners = pick('.listeners');
+  listeners.hidden = session.listeners <= 0;
+  listeners.textContent = `${session.listeners} listening`;
+
+  pick('.live-channel').textContent = session.channelName;
+  pick('.live-format').textContent = session.captureFormat;
+  pick('.live-uptime').textContent = duration(session.uptimeMs);
+  pick('.stat-player').textContent = session.playerState;
+
+  pick('.stat-bitrate').textContent = kbps(session.bitrate);
+  pick('.stat-muted').textContent = session.muted ? 'muted' : 'live';
+  pick('.mute-btn').textContent = session.muted ? 'Unmute bot' : 'Mute bot';
+  pick('.mute-btn').classList.toggle('danger', !session.muted);
+  pick('.stat-ping').textContent = session.ping === null ? '—' : `${session.ping} ms`;
+  pick('.stat-restarts').textContent = session.restarts === 0 ? 'none' : String(session.restarts);
+
+  const quality = pick('.quality-note');
+  quality.hidden = !session.qualityNote;
+  if (session.qualityNote) quality.textContent = session.qualityNote;
+
+  const tap = session.tap;
+  // These three were computed by the capture helper all along and never shown: a clipping signal
+  // and a silent source are the two failures people actually hit, and both were invisible.
+  pick('.clip-note').hidden = !tap?.clipping;
+  pick('.silent-note').hidden = !(tap?.silent && session.uptimeMs > 5_000);
+
+  if (tap) {
+    pick('.stat-buffer').textContent =
+      `${tap.bufferMs.toFixed(0)} / ${tap.targetMs.toFixed(0)} ms${tap.primed ? '' : ' · buffering'}`;
+    pick('.stat-padded').textContent = `${(tap.paddedMs / 1000).toFixed(1)} s`;
+    pick('.stat-trim').textContent = `${tap.trimmedMs.toFixed(0)} ms`;
+    pick('.stat-dropped').textContent = tap.droppedMs > 0 ? `${tap.droppedMs.toFixed(0)} ms` : 'none';
+
+    for (const [index, channel] of ['l', 'r'].entries()) {
+      const rms = tap.rmsDb?.[index] ?? -100;
+      const peak = tap.peakDb?.[index] ?? -100;
+      const meter = pick(`.meter-${channel}`);
+      meter.style.width = `${meterWidth(rms)}%`;
+      meter.classList.toggle('hot', peak > -3);
+      pick(`.peak-${channel}`).style.left = `${meterWidth(peak)}%`;
+      pick(`.db-${channel}`).textContent = formatDb(peak);
+      pick(`.db-${channel}`).classList.toggle('clipping', peak >= -0.1);
+      meter.closest('.meter').setAttribute('aria-valuenow', String(Math.round(Math.max(peak, -60))));
+    }
+  } else {
+    for (const id of ['.stat-buffer', '.stat-padded', '.stat-trim', '.stat-dropped']) {
+      pick(id).textContent = 'n/a';
+    }
+    for (const channel of ['l', 'r']) {
+      pick(`.meter-${channel}`).style.width = '0%';
+      pick(`.db-${channel}`).textContent = '−∞';
+    }
+  }
+
+  const series = trendFor(session.guildId);
+  series.buffer.push(tap?.bufferMs ?? 0);
+  series.ping.push(session.ping ?? 0);
+  // Snapshots arrive twice a second, so 120 samples is the advertised minute.
+  if (series.buffer.length > 120) series.buffer.shift();
+  if (series.ping.length > 120) series.ping.shift();
+  drawTrend(pick('.trend-canvas'), series);
+
+  renderMixInputs(card, session);
+
+  const bitrate = pick('.bitrate');
+  if (!ui.dragging.has(`${session.guildId}.bitrate`)) {
+    bitrate.max = String(Math.round(session.bitrateCeiling / 1000));
+    bitrate.value = String(Math.round(session.bitrate / 1000));
+    pick('.bitrate-value').textContent = kbps(session.bitrate);
+  }
+  if (!ui.dragging.has(`${session.guildId}.gain`)) {
+    pick('.gain').value = String(session.gainDb);
+    pick('.gain-value').textContent = `${Number(session.gainDb).toFixed(1)} dB`;
+  }
+  if (document.activeElement !== pick('.loudness')) pick('.loudness').value = session.loudness;
+}
+
+function renderSessions(sessions) {
+  const live = new Set(sessions.map((session) => session.guildId));
+  for (const [guildId, card] of cards) {
+    if (!live.has(guildId)) {
+      card.remove();
+      cards.delete(guildId);
+      history.delete(guildId);
+    }
+  }
+  for (const session of sessions) renderSession(session);
+}
 
 /* ── render ───────────────────────────────────────────────────────────────── */
 
 function render(state) {
   const becameReady = !ui.state?.bot.ready && state.bot.ready;
   ui.state = state;
+  ensureArtwork(state.nowPlaying);
 
   // The WebSocket commonly opens a fraction of a second before Discord's READY event. The first
   // guild request is therefore legitimately empty; refresh it as soon as the ready snapshot lands.
-  if (becameReady) void loadGuilds();
+  if (becameReady) {
+    void loadGuilds();
+    void loadPresets();
+  }
 
   $('log-file-hint').textContent = state.capabilities.logFile
     ? `Live history is also written to ${state.capabilities.logFile}.`
@@ -488,59 +969,22 @@ function render(state) {
   ping.hidden = state.bot.wsPing === null;
   if (state.bot.wsPing !== null) ping.textContent = `${state.bot.wsPing} ms`;
 
+  // What the PC is playing, whether or not it is the thing being captured.
+  const hostTrack = trackTitle(state.nowPlaying);
+  $('host-track').hidden = !hostTrack;
+  if (hostTrack) {
+    $('host-track-title').textContent = hostTrack;
+    setArtwork($('host-art'), state.nowPlaying);
+  }
+
+  for (const element of [$('invite-btn'), $('invite-link')]) {
+    element.hidden = !state.inviteUrl;
+    if (state.inviteUrl) element.href = state.inviteUrl;
+  }
+
   renderOnboarding(state.bot);
-
-  const live = session();
+  renderSessions(state.sessions);
   updateStartButton();
-  $('live-card').hidden = !live;
-  if (!live) return;
-
-  $('live-source').textContent = live.source.label;
-  $('live-channel').textContent = live.channelName;
-  $('live-format').textContent = live.captureFormat;
-  $('live-uptime').textContent = duration(live.uptimeMs);
-
-  $('stat-bitrate').textContent = kbps(live.bitrate);
-  $('stat-muted').textContent = live.muted ? 'muted' : 'live';
-  $('mute-btn').textContent = live.muted ? 'Unmute bot' : 'Mute bot';
-  $('mute-btn').classList.toggle('danger', !live.muted);
-  $('stat-ping').textContent = live.ping === null ? '—' : `${live.ping} ms`;
-  $('stat-player').textContent = live.playerState;
-
-  const warning = $('live-warning');
-  warning.hidden = !live.qualityNote;
-  if (live.qualityNote) warning.textContent = live.qualityNote;
-
-  const tap = live.tap;
-  if (tap) {
-    $('stat-buffer').textContent = `${tap.bufferMs.toFixed(0)} / ${tap.targetMs.toFixed(0)} ms`;
-    $('stat-padded').textContent = `${(tap.paddedMs / 1000).toFixed(1)} s`;
-    $('stat-trim').textContent = `${tap.trimmedMs.toFixed(0)} ms`;
-
-    for (const [index, channel] of ['l', 'r'].entries()) {
-      const rms = tap.rmsDb?.[index] ?? -100;
-      const peak = tap.peakDb?.[index] ?? -100;
-      $(`meter-${channel}`).style.width = `${meterWidth(rms)}%`;
-      $(`peak-${channel}`).style.left = `${meterWidth(peak)}%`;
-      $(`db-${channel}`).textContent = formatDb(peak);
-    }
-  } else {
-    for (const id of ['stat-buffer', 'stat-padded', 'stat-trim']) $(id).textContent = 'n/a';
-    for (const channel of ['l', 'r']) {
-      $(`meter-${channel}`).style.width = '0%';
-      $(`db-${channel}`).textContent = '−∞';
-    }
-  }
-
-  if (!ui.dragging.has('bitrate')) {
-    $('bitrate').max = String(Math.round(live.bitrateCeiling / 1000));
-    $('bitrate').value = String(Math.round(live.bitrate / 1000));
-    $('bitrate-value').textContent = kbps(live.bitrate);
-  }
-  if (!ui.dragging.has('gain')) {
-    $('gain').value = String(live.gainDb);
-    $('gain-value').textContent = `${Number(live.gainDb).toFixed(1)} dB`;
-  }
 }
 
 /**
@@ -588,8 +1032,7 @@ async function attemptSignIn() {
   try {
     const result = await post('signin');
     toast(result.ready ? `Signed in as ${result.tag}.` : 'Signed in.', 'ok');
-    await loadGuilds();
-    await loadSources();
+    await Promise.all([loadGuilds(), loadSources(), loadPresets()]);
   } catch (error) {
     fail(error);
   }
@@ -698,22 +1141,98 @@ async function runAction(button, path, label) {
 $('build-btn').addEventListener('click', (e) => runAction(e.target, 'setup/build-native', 'Build'));
 $('register-btn').addEventListener('click', (e) => runAction(e.target, 'setup/register-commands', 'Register'));
 
-$('diag-btn').addEventListener('click', async () => {
+/* ── diagnostics ──────────────────────────────────────────────────────────── */
+
+let lastReportText = '';
+
+/**
+ * A checklist, not a text dump.
+ *
+ * The report used to be a block of monospace that could only be read and re-typed into a search
+ * engine. Each check now knows what would fix it, and where the fix is a thing this panel can do,
+ * it renders as a button instead of an instruction.
+ */
+function renderDiagnostics(report) {
+  const list = $('diag-list');
+  list.replaceChildren();
+  list.hidden = false;
+  $('diag-copy').hidden = false;
+  lastReportText = report.report ?? '';
+
+  for (const check of report.checks) {
+    const row = document.createElement('div');
+    row.className = `check ${check.status}`;
+
+    const icon = document.createElement('span');
+    icon.className = 'check-icon';
+    icon.textContent = check.status === 'ok' ? '✓' : check.status === 'warn' ? '!' : '×';
+    icon.setAttribute('aria-label', check.status);
+
+    const body = document.createElement('div');
+    body.className = 'check-body';
+
+    const title = document.createElement('strong');
+    title.textContent = check.label;
+    const detail = document.createElement('span');
+    detail.className = 'check-detail';
+    detail.textContent = check.detail;
+    body.append(title, detail);
+
+    if (check.remedy) {
+      const remedy = document.createElement('p');
+      remedy.className = 'muted small';
+      remedy.textContent = check.remedy;
+      body.append(remedy);
+    }
+
+    row.append(icon, body);
+
+    if (check.action?.startsWith('open:')) {
+      const link = document.createElement('a');
+      link.className = 'btn ghost small';
+      link.href = check.action.slice(5);
+      link.target = '_blank';
+      link.rel = 'noreferrer';
+      link.textContent = 'Open';
+      row.append(link);
+    } else if (check.action) {
+      const fix = document.createElement('button');
+      fix.className = 'btn small';
+      fix.type = 'button';
+      fix.textContent = 'Fix';
+      fix.addEventListener('click', () => runAction(fix, check.action.replace(/^\/api\//, ''), 'Fix'));
+      row.append(fix);
+    }
+
+    list.append(row);
+  }
+}
+
+$('diag-btn').addEventListener('click', async (event) => {
+  const button = event.target;
+  button.disabled = true;
   try {
-    const { report } = await api('diagnostics');
-    const output = $('diag-output');
-    output.hidden = false;
-    output.textContent = report;
+    renderDiagnostics(await api('diagnostics'));
+  } catch (error) {
+    fail(error);
+  } finally {
+    button.disabled = false;
+  }
+});
+
+$('diag-copy').addEventListener('click', async () => {
+  try {
+    await navigator.clipboard.writeText(lastReportText);
+    toast('Diagnostics copied.', 'ok');
   } catch (error) {
     fail(error);
   }
 });
 
 $('quit-btn').addEventListener('click', async () => {
-  if (!window.confirm('Quit Discord Audio Bridge? Active streams will stop.')) return;
   try {
     await post('app/quit');
-    toast('Discord Audio Bridge is shutting down.', 'ok');
+    toast('Shutting down…');
   } catch (error) {
     fail(error);
   }
@@ -721,14 +1240,65 @@ $('quit-btn').addEventListener('click', async () => {
 
 /* ── logs ─────────────────────────────────────────────────────────────────── */
 
+function logVisible(line) {
+  if (RANK[line.dataset.level] > RANK[ui.logFilter]) return false;
+  if (!ui.logSearch) return true;
+  return line.textContent.toLowerCase().includes(ui.logSearch);
+}
+
+function applyLogFilters() {
+  for (const line of document.querySelectorAll('.log-line')) line.hidden = !logVisible(line);
+}
+
 $('log-filter').addEventListener('change', (event) => {
   ui.logFilter = event.target.value;
-  for (const line of document.querySelectorAll('.log-line')) {
-    line.hidden = RANK[line.dataset.level] > RANK[ui.logFilter];
-  }
+  applyLogFilters();
+});
+
+$('log-search').addEventListener('input', (event) => {
+  ui.logSearch = event.target.value.trim().toLowerCase();
+  applyLogFilters();
 });
 
 $('log-clear').addEventListener('click', () => $('log').replaceChildren());
+
+$('log-jump').addEventListener('click', () => {
+  const problems = [...document.querySelectorAll('.log-line.error, .log-line.warn')].filter((line) => !line.hidden);
+  const last = problems.at(-1);
+  if (!last) {
+    toast('No warnings or errors in view.');
+    return;
+  }
+  last.scrollIntoView({ block: 'center' });
+  last.classList.add('flash');
+  setTimeout(() => last.classList.remove('flash'), 1200);
+});
+
+function logText() {
+  return [...document.querySelectorAll('.log-line')]
+    .filter((line) => !line.hidden)
+    .map((line) => line.textContent)
+    .join('\n');
+}
+
+$('log-copy').addEventListener('click', async () => {
+  try {
+    await navigator.clipboard.writeText(logText());
+    toast('Log copied.', 'ok');
+  } catch (error) {
+    fail(error);
+  }
+});
+
+$('log-download').addEventListener('click', () => {
+  const blob = new Blob([logText()], { type: 'text/plain' });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = `bridge-log-${new Date().toISOString().replace(/[:.]/g, '-')}.txt`;
+  link.click();
+  URL.revokeObjectURL(url);
+});
 
 function appendLog(entry) {
   const log = $('log');
@@ -738,7 +1308,6 @@ function appendLog(entry) {
   const line = document.createElement('div');
   line.className = `log-line ${entry.level}`;
   line.dataset.level = entry.level;
-  line.hidden = RANK[entry.level] > RANK[ui.logFilter];
 
   const time = document.createElement('span');
   time.className = 'log-time';
@@ -753,6 +1322,7 @@ function appendLog(entry) {
   message.textContent = entry.extra ? `${entry.message} ${entry.extra}` : entry.message;
 
   line.append(time, scope, message);
+  line.hidden = !logVisible(line);
   log.append(line);
 
   while (log.childElementCount > 1000) log.firstElementChild.remove();
@@ -810,10 +1380,12 @@ async function connect() {
     return;
   }
 
+  let ticket;
   try {
-    // Establish an HttpOnly same-origin session before opening the WebSocket. Supplying secrets as
-    // fake subprotocol names is legal but inconsistently handled by browsers and intermediaries.
-    await post('session');
+    // Exchange the durable bearer token for a one-use ticket. A cookie would leak to unrelated
+    // localhost services because browser cookies do not distinguish ports.
+    ({ ticket } = await post('session'));
+    if (!ticket) throw new Error('The control server did not issue a WebSocket ticket.');
   } catch {
     startPolling();
     scheduleReconnect();
@@ -822,7 +1394,7 @@ async function connect() {
 
   const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
   try {
-    socket = new WebSocket(`${protocol}//${location.host}/ws`, ['bridge-v1']);
+    socket = new WebSocket(`${protocol}//${location.host}/ws`, ['bridge-v1', `auth.${ticket}`]);
   } catch {
     startPolling();
     scheduleReconnect();
@@ -869,7 +1441,7 @@ async function bootstrap() {
     // Prove normal HTTP access first. A WebSocket problem must never cover a healthy application
     // with a permanent waiting screen.
     await refreshState();
-    await Promise.all([loadGuilds(), loadSources()]);
+    await Promise.all([loadGuilds(), loadSources(), loadPresets()]);
   } catch (error) {
     showConnectionFailure(error);
     setTimeout(() => void bootstrap(), 1000);
@@ -880,10 +1452,10 @@ async function bootstrap() {
 
 void bootstrap();
 
-// The process list goes stale as apps come and go; a slow poll keeps it honest without hammering
-// AudioTap, which spawns a process on every enumeration.
+// The source list is pushed by the bridge's resident monitor, so this is only a slow backstop for
+// the case where that helper is unavailable and the list would otherwise never change.
 setInterval(() => {
-  if (document.visibilityState === 'visible' && ui.state) {
+  if (document.visibilityState === 'visible' && ui.state && !ui.state.capabilities.audioTapBuilt) {
     void loadSources();
   }
-}, 10_000);
+}, 30_000);

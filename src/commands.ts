@@ -1,18 +1,31 @@
 import {
+  ActionRowBuilder,
+  ButtonBuilder,
+  ButtonStyle,
   ChannelType,
-  EmbedBuilder,
+  ContainerBuilder,
   InteractionContextType,
   MessageFlags,
   PermissionFlagsBits,
+  SeparatorBuilder,
+  SeparatorSpacingSize,
   SlashCommandBuilder,
+  StringSelectMenuBuilder,
+  StringSelectMenuOptionBuilder,
+  TextDisplayBuilder,
+  type AnyComponentBuilder,
   type AutocompleteInteraction,
+  type ButtonInteraction,
   type ChatInputCommandInteraction,
+  type MessageComponentInteraction,
+  type StringSelectMenuInteraction,
   type VoiceBasedChannel,
 } from 'discord.js';
-import { generateDependencyReport } from '@discordjs/voice';
 
 import { config } from './config.ts';
+import { collectReport, renderReport } from './diagnostics.ts';
 import { logger } from './logger.ts';
+import { describeTrack, nowPlaying } from './audio/monitor.ts';
 import { listDshowDevices } from './audio/encoder.ts';
 import { captureBackend, isAudioTapBuilt, listDevices, listProcesses } from './audio/tap.ts';
 import { endSession, getSession, startOrRetarget, type SourceSpec } from './voice/session.ts';
@@ -30,7 +43,10 @@ export interface Command {
 const OPUS_MIN_BITRATE = 8_000;
 const OPUS_MAX_BITRATE = 510_000;
 
-function callerVoiceChannel(interaction: ChatInputCommandInteraction): VoiceBasedChannel {
+/** Discord's own limit on a select menu. */
+const MAX_OPTIONS = 25;
+
+function callerVoiceChannel(interaction: ChatInputCommandInteraction | MessageComponentInteraction): VoiceBasedChannel {
   // Voice states are cached from the GuildVoiceStates intent, so this needs no privileged intent.
   const channel = interaction.guild?.voiceStates.cache.get(interaction.user.id)?.channel;
   if (!channel) throw new UserError('Join a voice channel first, then run this command again.');
@@ -60,33 +76,209 @@ function ms(value: number): string {
   return hours > 0 ? `${hours}h ${minutes}m ${seconds}s` : `${minutes}m ${seconds}s`;
 }
 
+/* ── shared component surfaces ────────────────────────────────────────────── */
+
+/**
+ * Components V2 for the interactive replies.
+ *
+ * The old surface was an embed: a static snapshot that had to be re-run to see a newer number, and
+ * a text option whose value was a PID pasted out of an autocomplete list. Containers with real
+ * controls turn the same information into something you can act on - stop, mute and trim the gain
+ * without leaving the message, and pick a source from a menu that shows what is actually playing.
+ *
+ * Every custom id carries the guild it belongs to, so a stale message in another channel cannot
+ * quietly drive the wrong session.
+ */
+const ID = {
+  source: (guildId: string) => `bridge:source:${guildId}`,
+  stop: (guildId: string) => `bridge:stop:${guildId}`,
+  mute: (guildId: string) => `bridge:mute:${guildId}`,
+  gainDown: (guildId: string) => `bridge:gain-:${guildId}`,
+  gainUp: (guildId: string) => `bridge:gain+:${guildId}`,
+  refresh: (guildId: string) => `bridge:refresh:${guildId}`,
+};
+
+export function isBridgeComponent(customId: string): boolean {
+  return customId.startsWith('bridge:');
+}
+
+function row<T extends AnyComponentBuilder>(...components: T[]): ActionRowBuilder<T> {
+  return new ActionRowBuilder<T>().addComponents(...components);
+}
+
+/** The live control strip shown under a running session. */
+function sessionControls(guildId: string, muted: boolean): ActionRowBuilder<ButtonBuilder> {
+  return row(
+    new ButtonBuilder()
+      .setCustomId(ID.mute(guildId))
+      .setLabel(muted ? 'Unmute' : 'Mute')
+      .setStyle(muted ? ButtonStyle.Success : ButtonStyle.Secondary),
+    new ButtonBuilder().setCustomId(ID.gainDown(guildId)).setLabel('−3 dB').setStyle(ButtonStyle.Secondary),
+    new ButtonBuilder().setCustomId(ID.gainUp(guildId)).setLabel('+3 dB').setStyle(ButtonStyle.Secondary),
+    new ButtonBuilder().setCustomId(ID.refresh(guildId)).setLabel('Refresh').setStyle(ButtonStyle.Secondary),
+    new ButtonBuilder().setCustomId(ID.stop(guildId)).setLabel('Stop').setStyle(ButtonStyle.Danger),
+  );
+}
+
+function bar(db: number | undefined): string {
+  // A dB number means little at a glance; twelve blocks from -60 to 0 reads instantly.
+  if (db === undefined || !Number.isFinite(db) || db <= -60) return '▁'.repeat(12);
+  const filled = Math.max(0, Math.min(12, Math.round(((db + 60) / 60) * 12)));
+  return `${'█'.repeat(filled)}${'▁'.repeat(12 - filled)}`;
+}
+
+function statusContainer(guildId: string): ContainerBuilder {
+  const session = getSession(guildId);
+  if (!session) {
+    return new ContainerBuilder().addTextDisplayComponents(
+      new TextDisplayBuilder().setContent('### Nothing is streaming\nStart one with `/stream`.'),
+    );
+  }
+
+  const status = session.status();
+  const track = describeTrack(status.nowPlaying);
+  const tap = status.tap;
+
+  const headline = track
+    ? `### ${track}\n${status.source.label} → **${status.channelName}**`
+    : `### ${session.label}\nstreaming into **${status.channelName}**`;
+
+  const facts = [
+    `**Opus** ${Math.round(status.bitrate / 1000)} kbps · VBR ${status.vbr} · cx ${status.complexity}`,
+    `**Capture** ${status.captureFormat}`,
+    `**Player** ${status.playerState} · **ping** ${status.ping === null ? 'n/a' : `${status.ping} ms`} · **up** ${ms(status.uptimeMs)}`,
+    `**Gain** ${status.gainDb > 0 ? '+' : ''}${status.gainDb} dB · **loudness** ${status.loudness}` +
+      `${status.listeners > 0 ? ` · **${status.listeners}** listening` : ''}`,
+  ];
+
+  if (tap) {
+    facts.push(
+      `\`L ${bar(tap.peakDb[0])}\`\n\`R ${bar(tap.peakDb[1])}\`` +
+        (tap.clipping ? '  ⚠ **clipping**' : tap.silent ? '  · silent' : ''),
+    );
+  }
+
+  const container = new ContainerBuilder()
+    .addTextDisplayComponents(new TextDisplayBuilder().setContent(headline))
+    .addSeparatorComponents(new SeparatorBuilder().setSpacing(SeparatorSpacingSize.Small))
+    .addTextDisplayComponents(new TextDisplayBuilder().setContent(facts.join('\n')));
+
+  if (status.mix && status.mix.length > 1) {
+    container.addTextDisplayComponents(
+      new TextDisplayBuilder().setContent(
+        `**Mix**\n${status.mix
+          .map((input) => `· ${input.label} — ${input.gainDb > 0 ? '+' : ''}${input.gainDb} dB${input.live ? '' : ' (stopped)'}`)
+          .join('\n')}`,
+      ),
+    );
+  }
+
+  if (status.qualityNote) {
+    container.addTextDisplayComponents(new TextDisplayBuilder().setContent(`⚠️ ${status.qualityNote}`));
+  }
+  if (status.restarts > 0) {
+    container.addTextDisplayComponents(
+      new TextDisplayBuilder().setContent(`_${status.restarts} pipeline restart(s) since the last clean start._`),
+    );
+  }
+
+  container.addActionRowComponents(sessionControls(guildId, status.muted));
+  return container;
+}
+
+interface PickerItem {
+  key: string;
+  label: string;
+  description: string;
+  active: boolean;
+  source: SourceSpec;
+}
+
+async function pickerItems(kind: 'process' | 'device' | 'dshow'): Promise<PickerItem[]> {
+  if (kind === 'process') {
+    const processes = await listProcesses().catch(() => []);
+    return processes.slice(0, MAX_OPTIONS).map((process) => ({
+      key: `process:${process.pid}`,
+      label: (process.displayName || process.name).slice(0, 100),
+      description: `PID ${process.pid}${process.state === 'Active' ? ' · playing now' : ''}`.slice(0, 100),
+      active: process.state === 'Active',
+      source: {
+        kind: 'process',
+        pid: process.pid,
+        processName: process.name,
+        exclude: false,
+        label: process.displayName || process.name,
+      },
+    }));
+  }
+
+  if (kind === 'device') {
+    const devices = await listDevices().catch(() => []);
+    return devices.slice(0, MAX_OPTIONS).map((device) => ({
+      key: `device:${device.id}`,
+      label: `${device.isDefault ? '★ ' : ''}${device.name}`.slice(0, 100),
+      description: `${device.sampleRate / 1000} kHz ${device.sampleFormat}`.slice(0, 100),
+      active: device.isDefault,
+      source: { kind: 'device', id: device.id, label: device.name },
+    }));
+  }
+
+  const devices = await listDshowDevices().catch(() => []);
+  return devices.slice(0, MAX_OPTIONS).map((device) => ({
+    key: `dshow:${device.name}`,
+    label: device.name.slice(0, 100),
+    description: 'DirectShow input',
+    active: false,
+    source: { kind: 'dshow', name: device.name, label: device.name },
+  }));
+}
+
+const pickerCache = new Map<string, PickerItem[]>();
+
+async function sourcePicker(guildId: string, kind: 'process' | 'device' | 'dshow'): Promise<ContainerBuilder> {
+  const items = await pickerItems(kind);
+  pickerCache.set(guildId, items);
+
+  const container = new ContainerBuilder().addTextDisplayComponents(
+    new TextDisplayBuilder().setContent(
+      items.length === 0
+        ? '### Nothing to capture\nNo source is available right now. Start playback on the host and run `/stream` again.'
+        : '### Pick a source\nChoose what everyone in your voice channel should hear.',
+    ),
+  );
+
+  if (items.length > 0) {
+    const menu = new StringSelectMenuBuilder()
+      .setCustomId(ID.source(guildId))
+      .setPlaceholder('Choose a source')
+      .addOptions(
+        items.map((item) =>
+          new StringSelectMenuOptionBuilder()
+            .setLabel(item.label)
+            .setDescription(item.description)
+            .setValue(item.key)
+            .setEmoji(item.active ? '🔊' : '🔈'),
+        ),
+      );
+    container.addActionRowComponents(row(menu));
+  }
+
+  return container;
+}
+
+/* ── commands ─────────────────────────────────────────────────────────────── */
+
 async function startStream(
-  interaction: ChatInputCommandInteraction,
+  interaction: ChatInputCommandInteraction | MessageComponentInteraction,
   source: SourceSpec,
 ): Promise<void> {
   const channel = callerVoiceChannel(interaction);
-  const bitrate = resolveBitrate(channel);
+  await startOrRetarget(channel, source, resolveBitrate(channel));
 
-  await startOrRetarget(channel, source, bitrate);
-
-  const started = getSession(interaction.guildId!)!.status();
-
-  const embed = new EmbedBuilder()
-    .setColor(started.qualityNote ? 0xfee75c : 0x57f287)
-    .setTitle('Streaming')
-    .setDescription(`**${source.label}** into **${channel.name}**`)
-    .addFields(
-      { name: 'Capture', value: started.captureFormat, inline: true },
-      { name: 'Opus bitrate', value: `${Math.round(bitrate / 1000)} kbps`, inline: true },
-      { name: 'VBR', value: `${config.opus.vbr}, cx ${config.opus.complexity}`, inline: true },
-    )
-    .setFooter({ text: 'Run /status for live pipeline numbers.' });
-
-  if (started.qualityNote) {
-    embed.addFields({ name: '⚠ Quality note', value: started.qualityNote });
-  }
-
-  await interaction.editReply({ embeds: [embed] });
+  await interaction.editReply({
+    components: [statusContainer(interaction.guildId!)],
+    flags: MessageFlags.IsComponentsV2,
+  });
 }
 
 const stream: Command = {
@@ -101,8 +293,7 @@ const stream: Command = {
         .addStringOption((option) =>
           option
             .setName('target')
-            .setDescription('The app to capture')
-            .setRequired(true)
+            .setDescription('Leave empty to choose from a menu')
             .setAutocomplete(true),
         )
         .addBooleanOption((option) =>
@@ -130,7 +321,6 @@ const stream: Command = {
           option
             .setName('target')
             .setDescription('DirectShow audio input')
-            .setRequired(true)
             .setAutocomplete(true),
         ),
     ),
@@ -145,7 +335,7 @@ const stream: Command = {
         await interaction.respond(
           processes
             .filter((p) => p.name.toLowerCase().includes(typed) || p.displayName.toLowerCase().includes(typed))
-            .slice(0, 25)
+            .slice(0, MAX_OPTIONS)
             .map((p) => ({
               name: `${p.state === 'Active' ? '▶ ' : ''}${p.name} (pid ${p.pid})`.slice(0, 100),
               value: `${p.pid}:${p.name}`,
@@ -159,7 +349,7 @@ const stream: Command = {
         await interaction.respond(
           devices
             .filter((d) => d.name.toLowerCase().includes(typed))
-            .slice(0, 25)
+            .slice(0, MAX_OPTIONS)
             .map((d) => ({
               name: `${d.isDefault ? '★ ' : ''}${d.name} (${d.sampleRate / 1000} kHz)`.slice(0, 100),
               value: d.id.slice(0, 100),
@@ -172,7 +362,7 @@ const stream: Command = {
       await interaction.respond(
         devices
           .filter((d) => d.name.toLowerCase().includes(typed))
-          .slice(0, 25)
+          .slice(0, MAX_OPTIONS)
           .map((d) => ({ name: d.name.slice(0, 100), value: d.name.slice(0, 100) })),
       );
     } catch (error) {
@@ -184,8 +374,9 @@ const stream: Command = {
   async execute(interaction) {
     await interaction.deferReply();
     const sub = interaction.options.getSubcommand();
+    const raw = interaction.options.getString('target');
 
-    if (sub === 'app') {
+    if (sub === 'app' || sub === 'device') {
       if (!isAudioTapBuilt()) {
         throw new UserError(
           IS_WINDOWS
@@ -193,8 +384,22 @@ const stream: Command = {
             : 'Per-app capture needs the PipeWire tools (pw-record). On Debian/Ubuntu run `apt install pipewire-bin`; on Fedora run `dnf install pipewire-utils`.',
         );
       }
+    } else if (!IS_WINDOWS) {
+      throw new UserError('DirectShow capture is Windows-only. On this host, use `/stream app` or `/stream device`.');
+    }
 
-      const raw = interaction.options.getString('target', true);
+    // No target given: show a menu of what is actually playing rather than making the caller
+    // guess. This is the path the buttons and the select handler come back through.
+    if (!raw) {
+      const kind = sub === 'app' ? 'process' : sub === 'device' ? 'device' : 'dshow';
+      await interaction.editReply({
+        components: [await sourcePicker(interaction.guildId!, kind)],
+        flags: MessageFlags.IsComponentsV2,
+      });
+      return;
+    }
+
+    if (sub === 'app') {
       const [pidText, ...rest] = raw.split(':');
       const pid = Number.parseInt(pidText ?? '', 10);
       if (!Number.isInteger(pid) || pid <= 0) {
@@ -206,6 +411,7 @@ const stream: Command = {
       await startStream(interaction, {
         kind: 'process',
         pid,
+        processName: rest.join(':') || undefined,
         exclude: invert,
         label: invert ? `everything except ${name}` : name,
       });
@@ -213,30 +419,17 @@ const stream: Command = {
     }
 
     if (sub === 'device') {
-      if (!isAudioTapBuilt()) {
-        throw new UserError(
-          IS_WINDOWS
-            ? 'Device capture needs the AudioTap helper. Run `npm run build:native` on the host, or use `/stream dshow` instead.'
-            : 'Device capture needs the PipeWire tools (pw-record). On Debian/Ubuntu run `apt install pipewire-bin`; on Fedora run `dnf install pipewire-utils`.',
-        );
-      }
-
-      const id = interaction.options.getString('target') ?? 'default';
       const devices = await listDevices().catch(() => []);
-      const match = devices.find((d) => d.id === id);
+      const match = devices.find((d) => d.id === raw);
       await startStream(interaction, {
         kind: 'device',
-        id,
-        label: match?.name ?? (id === 'default' ? 'default output device' : id),
+        id: raw,
+        label: match?.name ?? (raw === 'default' ? 'default output device' : raw),
       });
       return;
     }
 
-    if (!IS_WINDOWS) {
-      throw new UserError('DirectShow capture is Windows-only. On this host, use `/stream app` or `/stream device`.');
-    }
-    const name = interaction.options.getString('target', true);
-    await startStream(interaction, { kind: 'dshow', name, label: name });
+    await startStream(interaction, { kind: 'dshow', name: raw, label: raw });
   },
 };
 
@@ -256,48 +449,15 @@ const stop: Command = {
 const status: Command = {
   data: new SlashCommandBuilder()
     .setName('status')
-    .setDescription('Show live numbers for the current stream')
+    .setDescription('Show live numbers for the current stream, with controls')
     .setContexts(InteractionContextType.Guild),
 
   async execute(interaction) {
     await interaction.deferReply();
-    const session = getSession(interaction.guildId!);
-    if (!session) throw new UserError('Nothing is streaming here. Start one with `/stream`.');
-
-    const s = session.status();
-    const embed = new EmbedBuilder()
-      .setColor(s.playerState === 'playing' ? 0x57f287 : 0xfee75c)
-      .setTitle(`${s.source.label} → ${s.channelName}`)
-      .addFields(
-        { name: 'Capture', value: s.captureFormat, inline: true },
-        { name: 'Encode', value: `Opus ${Math.round(s.bitrate / 1000)} kbps, VBR ${s.vbr}, cx ${s.complexity}`, inline: true },
-        { name: 'Player', value: s.playerState, inline: true },
-        { name: 'Connection', value: s.connectionState, inline: true },
-        { name: 'UDP ping', value: s.ping === null ? 'n/a' : `${s.ping} ms`, inline: true },
-        { name: 'Uptime', value: ms(s.uptimeMs), inline: true },
-      );
-
-    if (s.tap) {
-      embed.addFields({
-        name: 'Jitter buffer',
-        value:
-          `${s.tap.bufferMs.toFixed(0)} / ${s.tap.targetMs.toFixed(0)} ms` +
-          (s.tap.primed ? '' : ' (priming)') +
-          `\nsilence filled: ${(s.tap.paddedMs / 1000).toFixed(1)}s` +
-          `\ndrift trimmed: ${s.tap.trimmedMs.toFixed(0)} ms` +
-          (s.tap.droppedMs > 0 ? `\noverruns: ${s.tap.droppedMs.toFixed(0)} ms` : ''),
-      });
-    }
-
-    if (s.qualityNote) {
-      embed.addFields({ name: '⚠ Quality note', value: s.qualityNote });
-    }
-
-    if (s.restarts > 0) {
-      embed.setFooter({ text: `${s.restarts} pipeline restart(s) since the last clean start` });
-    }
-
-    await interaction.editReply({ embeds: [embed] });
+    await interaction.editReply({
+      components: [statusContainer(interaction.guildId!)],
+      flags: MessageFlags.IsComponentsV2,
+    });
   },
 };
 
@@ -322,12 +482,41 @@ const gain: Command = {
 
     const db = interaction.options.getNumber('db', true);
     await session.setGain(db);
-    await interaction.editReply(
-      db === 0
-        ? 'Gain reset to 0 dB (samples pass through untouched).'
-        : `Gain set to ${db > 0 ? '+' : ''}${db} dB.` +
-            (db > 0 ? ' Positive gain can clip - back off if it sounds harsh.' : ''),
-    );
+    await interaction.editReply({
+      components: [statusContainer(interaction.guildId!)],
+      flags: MessageFlags.IsComponentsV2,
+    });
+  },
+};
+
+const loudness: Command = {
+  data: new SlashCommandBuilder()
+    .setName('loudness')
+    .setDescription('Choose how levels are managed on the way out')
+    .setContexts(InteractionContextType.Guild)
+    .addStringOption((option) =>
+      option
+        .setName('mode')
+        .setDescription('How much to intervene')
+        .setRequired(true)
+        .addChoices(
+          { name: 'off — send exactly what the app produces', value: 'off' },
+          { name: 'limit — true-peak limiter only (recommended)', value: 'limit' },
+          { name: 'match — normalise to a consistent loudness', value: 'match' },
+        ),
+    ),
+
+  async execute(interaction) {
+    await interaction.deferReply();
+    const session = getSession(interaction.guildId!);
+    if (!session) throw new UserError('Nothing is streaming here.');
+
+    const mode = interaction.options.getString('mode', true) as 'off' | 'limit' | 'match';
+    await session.setLoudness(mode);
+    await interaction.editReply({
+      components: [statusContainer(interaction.guildId!)],
+      flags: MessageFlags.IsComponentsV2,
+    });
   },
 };
 
@@ -359,13 +548,10 @@ const bitrate: Command = {
           : session.bitrate;
 
     await session.setBitrate(target);
-
-    const warning =
-      requested !== null && requested * 1000 > target
-        ? `\nCapped at this channel's ${Math.round(target / 1000)} kbps ceiling.`
-        : '';
-
-    await interaction.editReply(`Re-encoding at ${Math.round(target / 1000)} kbps.${warning}`);
+    await interaction.editReply({
+      components: [statusContainer(interaction.guildId!)],
+      flags: MessageFlags.IsComponentsV2,
+    });
   },
 };
 
@@ -429,50 +615,48 @@ const sources: Command = {
   async execute(interaction) {
     await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
-    const embed = new EmbedBuilder().setColor(0x5865f2).setTitle('Capture sources');
+    const [processes, devices, dshow] = await Promise.all([
+      isAudioTapBuilt() ? listProcesses().catch(() => []) : Promise.resolve([]),
+      isAudioTapBuilt() ? listDevices().catch(() => []) : Promise.resolve([]),
+      IS_WINDOWS ? listDshowDevices().catch(() => []) : Promise.resolve([]),
+    ]);
 
-    if (isAudioTapBuilt()) {
-      const [processes, devices] = await Promise.all([
-        listProcesses().catch(() => []),
-        listDevices().catch(() => []),
-      ]);
-
-      embed.addFields(
-        {
-          name: 'Applications playing audio',
-          value:
-            processes
-              .slice(0, 15)
-              .map((p) => `${p.state === 'Active' ? '▶' : '□'} \`${p.pid}\` ${p.name}`)
-              .join('\n') || '_none right now - start playback and try again_',
-        },
-        {
-          name: 'Output devices',
-          value:
-            devices
-              .slice(0, 10)
-              .map((d) => `${d.isDefault ? '★' : '·'} ${d.name} — ${d.sampleRate / 1000} kHz ${d.sampleFormat}`)
-              .join('\n') || '_none_',
-        },
-      );
-    } else {
-      embed.addFields({
-        name: 'Applications and devices',
-        value: IS_WINDOWS
-          ? 'Unavailable — AudioTap is not built. Run `npm run build:native` on the host.'
-          : 'Unavailable — the PipeWire tools are missing. Install `pipewire-bin` on Debian/Ubuntu or `pipewire-utils` on Fedora.',
-      });
-    }
+    const sections = [
+      `### Capture sources`,
+      `**Applications playing audio**\n${
+        processes
+          .slice(0, 15)
+          .map((p) => `${p.state === 'Active' ? '▶' : '□'} \`${p.pid}\` ${p.name}`)
+          .join('\n') ||
+        (isAudioTapBuilt()
+          ? '_none right now — start playback and try again_'
+          : IS_WINDOWS
+            ? '_unavailable — AudioTap is not built_'
+            : '_unavailable — the PipeWire tools are missing_')
+      }`,
+      `**Output devices**\n${
+        devices
+          .slice(0, 10)
+          .map((d) => `${d.isDefault ? '★' : '·'} ${d.name} — ${d.sampleRate / 1000} kHz ${d.sampleFormat}`)
+          .join('\n') || '_none_'
+      }`,
+    ];
 
     if (IS_WINDOWS) {
-      const dshow = await listDshowDevices().catch(() => []);
-      embed.addFields({
-        name: 'DirectShow inputs',
-        value: dshow.map((d) => `· ${d.name}`).join('\n') || '_none_',
-      });
+      sections.push(`**DirectShow inputs**\n${dshow.map((d) => `· ${d.name}`).join('\n') || '_none_'}`);
     }
 
-    await interaction.editReply({ embeds: [embed] });
+    const track = describeTrack(nowPlaying());
+    if (track) sections.push(`**Now playing on the host**\n${track}`);
+
+    await interaction.editReply({
+      components: [
+        new ContainerBuilder().addTextDisplayComponents(
+          new TextDisplayBuilder().setContent(sections.join('\n\n')),
+        ),
+      ],
+      flags: MessageFlags.IsComponentsV2 | MessageFlags.Ephemeral,
+    });
   },
 };
 
@@ -484,83 +668,121 @@ const diagnose: Command = {
 
   async execute(interaction) {
     await interaction.deferReply({ flags: MessageFlags.Ephemeral });
-    const report = await collectDiagnostics();
-    await interaction.editReply(`\`\`\`\n${report.slice(0, 1_900)}\n\`\`\``);
+    const report = collectReport();
+    const icon = { ok: '✅', warn: '⚠️', fail: '❌' } as const;
+
+    const rows = report.checks
+      .map((check) => `${icon[check.status]} **${check.label}** — ${check.detail}${check.remedy ? `\n> ${check.remedy}` : ''}`)
+      .join('\n');
+
+    await interaction.editReply({
+      components: [
+        new ContainerBuilder().addTextDisplayComponents(
+          new TextDisplayBuilder().setContent(
+            `### Diagnostics\n${report.summary.fail} failing · ${report.summary.warn} warnings · ${report.summary.ok} ok\n\n${rows}`.slice(
+              0,
+              3_900,
+            ),
+          ),
+        ),
+      ],
+      flags: MessageFlags.IsComponentsV2 | MessageFlags.Ephemeral,
+    });
   },
 };
 
-export async function collectDiagnostics(): Promise<string> {
-  const { spawnSync } = await import('node:child_process');
+/* ── component interactions ───────────────────────────────────────────────── */
 
-  const ffmpeg = spawnSync(config.paths.ffmpeg, ['-version'], { encoding: 'utf8', windowsHide: true });
-  const ffmpegLine = ffmpeg.error
-    ? `NOT FOUND at "${config.paths.ffmpeg}"`
-    : (ffmpeg.stdout.split('\n')[0] ?? 'unknown');
+/**
+ * Handles the buttons and select menus attached to the replies above.
+ *
+ * Each id embeds its guild, so a message left open in one server can never drive another. The
+ * reply is always the freshly rendered status container, which keeps the message the user is
+ * looking at and the state of the bridge in step without a second command.
+ */
+export async function handleComponent(interaction: MessageComponentInteraction): Promise<void> {
+  const [, action, guildId] = interaction.customId.split(':');
+  if (!action || !guildId) return;
 
-  const opus = spawnSync(config.paths.ffmpeg, ['-hide_banner', '-h', 'encoder=libopus'], {
-    encoding: 'utf8',
-    windowsHide: true,
-  });
-  const hasLibopus = !opus.error && opus.stdout.includes('libopus');
-
-  const backend = captureBackend();
-
-  // The capture half of the report is the one part that genuinely differs per OS.
-  const capture: string[] = [];
-  if (IS_WINDOWS) {
-    capture.push(
-      `AudioTap    ${backend === 'wasapi' ? config.paths.audioTap : `NOT BUILT (expected ${config.paths.audioTap}) - run npm run build:native`}`,
-    );
-    // `dotnet` on PATH only proves the runtime is there. Building AudioTap needs the SDK, and
-    // the host reports its absence by failing --version with "No .NET SDKs were found".
-    const dotnet = spawnSync('dotnet', ['--version'], { encoding: 'utf8', windowsHide: true });
-    const dotnetVersion = dotnet.stdout.trim();
-    const dotnetMajor = Number.parseInt(dotnetVersion.split('.')[0] ?? '', 10);
-    const helperBundled = backend === 'wasapi';
-    capture.push(
-      `dotnet SDK  ${
-        dotnet.error
-          ? helperBundled
-            ? 'not installed (optional; the bundled AudioTap is self-contained)'
-            : 'not installed (needed to build AudioTap: winget install Microsoft.DotNet.SDK.10)'
-          : dotnet.status === 0 && dotnetVersion
-            ? dotnetMajor >= 10
-              ? dotnetVersion
-              : helperBundled
-                ? `${dotnetVersion} (optional; SDK 10 is needed only to rebuild AudioTap)`
-                : `${dotnetVersion} - TOO OLD (install Microsoft.DotNet.SDK.10 to build AudioTap)`
-            : helperBundled
-              ? 'runtime only (optional; the bundled AudioTap is self-contained)'
-              : 'runtime present but NO SDK (install Microsoft.DotNet.SDK.10 to build AudioTap)'
-      }`,
-    );
-  } else {
-    const pw = spawnSync(config.paths.pwRecord, ['--version'], { encoding: 'utf8', windowsHide: true });
-    const pwVersion = pw.error ? undefined : pw.stdout.trim().split('\n').at(-1)?.trim();
-    capture.push(
-      `pw-record   ${
-        pwVersion ??
-        `NOT FOUND at "${config.paths.pwRecord}" - install pipewire-bin (Debian/Ubuntu) or pipewire-utils (Fedora)`
-      }`,
-    );
+  if (interaction.guildId !== guildId) {
+    await interaction.reply({
+      content: 'That control belongs to a different server.',
+      flags: MessageFlags.Ephemeral,
+    });
+    return;
   }
 
-  return [
-    '--- host ---',
-    `node        ${process.version} (${process.platform}/${process.arch})`,
-    `ffmpeg      ${ffmpegLine}`,
-    `libopus     ${hasLibopus ? 'available' : 'MISSING - ffmpeg build has no libopus encoder'}`,
-    ...capture,
-    `log file    ${config.paths.logFile ?? 'disabled'}`,
-    `remote UI   ${config.remote.port > 0 ? `${config.remote.host}:${config.remote.port}` : 'disabled'}`,
-    '',
-    '--- @discordjs/voice ---',
-    generateDependencyReport(),
-  ].join('\n');
+  await interaction.deferUpdate();
+
+  if (action === 'source') {
+    const key = (interaction as StringSelectMenuInteraction).values[0];
+    const item = pickerCache.get(guildId)?.find((candidate) => candidate.key === key);
+    if (!item) {
+      await interaction.editReply({
+        components: [
+          new ContainerBuilder().addTextDisplayComponents(
+            new TextDisplayBuilder().setContent('That source list is stale. Run `/stream` again.'),
+          ),
+        ],
+        flags: MessageFlags.IsComponentsV2,
+      });
+      return;
+    }
+    await startStream(interaction, item.source);
+    return;
+  }
+
+  const session = getSession(guildId);
+  if (!session) {
+    await interaction.editReply({
+      components: [statusContainer(guildId)],
+      flags: MessageFlags.IsComponentsV2,
+    });
+    return;
+  }
+
+  switch (action) {
+    case 'stop':
+      await endSession(guildId);
+      break;
+    case 'mute':
+      await session.setMuted(!session.muted);
+      break;
+    case 'gain-':
+      await session.setGain(Math.max(-60, session.status().gainDb - 3));
+      break;
+    case 'gain+':
+      await session.setGain(Math.min(20, session.status().gainDb + 3));
+      break;
+    case 'refresh':
+      break;
+    default:
+      return;
+  }
+
+  await interaction.editReply({
+    components: [statusContainer(guildId)],
+    flags: MessageFlags.IsComponentsV2,
+  });
 }
 
-export const commands: Command[] = [stream, stop, status, gain, bitrate, quality, sources, diagnose];
+/** Kept for `--doctor` and anything else that wants the plain-text dependency report. */
+export async function collectDiagnostics(): Promise<string> {
+  void captureBackend();
+  return renderReport();
+}
+
+export const commands: Command[] = [stream, stop, status, gain, loudness, bitrate, quality, sources, diagnose];
+
+// This bridge can enumerate and capture host applications. Ship every command as administrator-only
+// instead of exposing that capability to every member of every guild the bot joins. A server owner
+// can still make an explicit Discord command-permission override if they understand the tradeoff.
+for (const command of commands) {
+  (command.data as SlashCommandBuilder).setDefaultMemberPermissions(PermissionFlagsBits.Administrator);
+}
 
 export const commandsByName = new Map(commands.map((command) => [command.data.name, command]));
 
 export const requiredChannelType = ChannelType.GuildVoice;
+
+export type { ButtonInteraction };

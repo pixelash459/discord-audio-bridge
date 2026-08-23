@@ -27,6 +27,8 @@ header {
   max-width: 880px; margin: 0 auto; padding: 32px 20px 18px;
   display: flex; align-items: center; justify-content: space-between; gap: 16px;
 }
+
+.header-actions { display: grid; justify-items: end; gap: 8px; }
 .eyebrow { margin: 0 0 4px; color: #8f98ad; font-size: 12px; letter-spacing: .12em; text-transform: uppercase; }
 h1 { margin: 0; font-size: clamp(24px, 6vw, 36px); letter-spacing: -.04em; }
 .lede { margin: 7px 0 0; color: #969fb2; font-size: 13px; }
@@ -102,4 +104,200 @@ button:disabled { opacity: .55; cursor: wait; }
 
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { scroll-behavior: auto !important; transition: none !important; animation: none !important; }
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   Phone-first additions: tap-target source tiles, meters, now-playing, offline.
+   ───────────────────────────────────────────────────────────────────────────── */
+
+.offline {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  padding: 10px 16px;
+  text-align: center;
+  font-size: 13px;
+  font-weight: 600;
+  color: #241a00;
+  background: #faa61a;
+}
+
+/* ── now playing on the host ──────────────────────────────────────────────── */
+
+.host-track {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 14px;
+  margin-bottom: 16px;
+  border: 1px solid #262b36;
+  border-radius: 16px;
+  background: #171b25;
+}
+
+.host-art {
+  width: 56px;
+  height: 56px;
+  border-radius: 10px;
+  object-fit: cover;
+  flex: none;
+}
+
+.host-track h2 {
+  font-size: 16px;
+  line-height: 1.3;
+  overflow-wrap: anywhere;
+}
+
+/* ── source tiles ─────────────────────────────────────────────────────────── */
+
+.source-filter {
+  width: 100%;
+  margin: 12px 0 10px;
+}
+
+.source-tiles {
+  display: grid;
+  gap: 8px;
+  max-height: 46vh;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+.source-tile {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  /* 56px keeps every row comfortably above the minimum reliable touch target. */
+  min-height: 56px;
+  padding: 10px 14px;
+  border: 1px solid #262b36;
+  border-radius: 12px;
+  background: #0f1115;
+  color: #e6e8ee;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.source-tile.selected {
+  border-color: #5865f2;
+  background: rgb(88 101 242 / 16%);
+}
+
+.tile-icon {
+  width: 26px;
+  height: 26px;
+  border-radius: 6px;
+  flex: none;
+  object-fit: contain;
+}
+
+.tile-text {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.tile-text strong {
+  font-size: 14px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.tile-text span {
+  font-size: 11px;
+  color: #9aa2b1;
+}
+
+/* ── session card additions ───────────────────────────────────────────────── */
+
+.card-title {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+}
+
+.session-art {
+  width: 48px;
+  height: 48px;
+  border-radius: 10px;
+  object-fit: cover;
+  flex: none;
+}
+
+.meters {
+  display: grid;
+  gap: 5px;
+  margin: 12px 0;
+}
+
+.meter-row {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  font-size: 10px;
+  font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  color: #6b7383;
+}
+
+.meter {
+  flex: 1;
+  height: 7px;
+  border-radius: 999px;
+  background: #0b0d11;
+  overflow: hidden;
+}
+
+.meter-fill {
+  height: 100%;
+  width: 0;
+  border-radius: 999px;
+  background: linear-gradient(90deg, #3ba55d, #faa61a);
+  transition: width 0.12s linear;
+}
+
+.alert {
+  margin: 6px 0 0;
+  padding: 8px 11px;
+  border-radius: 9px;
+  font-size: 12px;
+  font-weight: 600;
+  background: rgb(237 66 69 / 16%);
+  color: #ff8a8c;
+}
+
+.slider-label {
+  display: block;
+  margin-bottom: 5px;
+  font-size: 12px;
+  color: #9aa2b1;
+}
+
+.mix-inputs {
+  display: grid;
+  gap: 10px;
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid #262b36;
+}
+
+.mix-value {
+  font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  font-size: 11px;
+  color: #6b7383;
+}
+
+/* Keep content clear of a phone's rounded corners and home indicator. */
+body {
+  padding-left: env(safe-area-inset-left);
+  padding-right: env(safe-area-inset-right);
+  padding-bottom: calc(24px + env(safe-area-inset-bottom));
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .meter-fill { transition: none; }
 }

@@ -1,7 +1,7 @@
 {
   "name": "discord-audio-bridge",
-  "version": "1.2.1",
-  "description": "Streams audio from a specific Windows or Linux application into a Discord voice channel at the highest quality Discord allows.",
+  "version": "1.3.0",
+  "description": "Streams applications, devices, or live mixes from Windows and Linux into Discord voice channels.",
   "type": "module",
   "private": true,
   "engines": {

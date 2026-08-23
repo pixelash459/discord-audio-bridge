@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="Discord Audio Bridge">
+  <rect width="512" height="512" rx="112" fill="#5865f2"/>
+  <g fill="none" stroke="#ffffff" stroke-width="34" stroke-linecap="round">
+    <path d="M136 296v-40a120 120 0 0 1 240 0v40"/>
+  </g>
+  <rect x="108" y="286" width="64" height="112" rx="30" fill="#ffffff"/>
+  <rect x="340" y="286" width="64" height="112" rx="30" fill="#ffffff"/>
+</svg>

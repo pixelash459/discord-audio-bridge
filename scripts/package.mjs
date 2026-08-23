@@ -287,7 +287,13 @@ async function packageLinux() {
       ].join('\n'),
       { mode: 0o755 },
     );
-    run(appimagetool, ['--appimage-extract-and-run', appDir, join(release, `${name}.AppImage`)], {
+    const runtime = process.env['APPIMAGE_RUNTIME_PATH'];
+    run(appimagetool, [
+      '--appimage-extract-and-run',
+      ...(runtime ? ['--runtime-file', runtime] : []),
+      appDir,
+      join(release, `${name}.AppImage`),
+    ], {
       env: { ...process.env, ARCH: ARCH_APPIMAGE },
     });
   } else {

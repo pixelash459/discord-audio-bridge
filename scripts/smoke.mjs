@@ -218,6 +218,8 @@ const apiSource = await readFile(new URL('../src/control/api.ts', import.meta.ur
 const controlServerSource = await readFile(new URL('../src/control/server.ts', import.meta.url), 'utf8');
 const packageSource = await readFile(new URL('./package.mjs', import.meta.url), 'utf8');
 const workflowSource = await readFile(new URL('../.github/workflows/ci.yml', import.meta.url), 'utf8');
+const controlUiSource = await readFile(new URL('../web/app.js', import.meta.url), 'utf8');
+const controlUiHtml = await readFile(new URL('../web/index.html', import.meta.url), 'utf8');
 
 if (
   pipewireSource.includes("config.paths.pwDump, ['Node']") ||
@@ -229,6 +231,22 @@ if (
   process.stdout.write('  FAIL  PipeWire uses the portable pw-dump command contract\n');
 } else {
   process.stdout.write('  ok    PipeWire uses the portable pw-dump command contract\n');
+}
+
+if (
+  !controlUiHtml.includes('id="support-copy"') ||
+  !controlUiHtml.includes('id="support-download"') ||
+  !controlUiSource.includes('async function copyText(text)') ||
+  !controlUiSource.includes("document.execCommand('copy')") ||
+  !controlUiSource.includes('async function buildSupportReport()') ||
+  !controlUiSource.includes('line.dataset.copyText') ||
+  !controlUiSource.includes("'=== Diagnostics ==='") ||
+  !controlUiSource.includes("'=== Recent logs (all levels) ==='")
+) {
+  failed++;
+  process.stdout.write('  FAIL  portable copyable support report contract\n');
+} else {
+  process.stdout.write('  ok    portable copyable support report contract\n');
 }
 const desktopSource = await readFile(
   new URL('../packaging/io.github.ashutoshchaudhary_lgtm.discord-audio-bridge.desktop', import.meta.url),

@@ -428,11 +428,14 @@
                 <option value="error">errors only</option>
               </select>
               <button id="log-jump" class="btn ghost small" type="button" title="Jump to the most recent problem">Last problem</button>
-              <button id="log-copy" class="btn ghost small" type="button">Copy</button>
-              <button id="log-download" class="btn ghost small" type="button">Download</button>
+              <button id="support-copy" class="btn small" type="button">Copy support report</button>
+              <button id="support-download" class="btn ghost small" type="button">Download report</button>
+              <button id="log-copy" class="btn ghost small" type="button">Copy visible log</button>
+              <button id="log-download" class="btn ghost small" type="button">Download visible log</button>
               <button id="log-clear" class="btn ghost small" type="button">Clear</button>
             </div>
           </header>
+          <p class="muted small">Support reports combine system diagnostics with every recent log line available in this session. Credentials are redacted, but review the report before sharing it.</p>
           <p id="log-file-hint" class="muted">Loading persistent log location…</p>
           <div id="log" class="log" tabindex="0" role="log" aria-label="Bridge log"></div>
         </article>

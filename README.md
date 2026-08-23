@@ -228,9 +228,20 @@ and run diagnostics. Settings that only apply at startup are marked as requiring
 **Quit app**, then reopen **Discord Audio Bridge** from Applications to apply them.
 
 **Logs** — the bot's log, live, filterable by level, with history from before you opened the panel.
+**Copy support report** makes one paste-ready text file from platform diagnostics and all recent log
+levels; **Download report** is available if the browser blocks clipboard access. The report excludes
+saved credentials and the logger redacts known token forms, but review it before sharing.
 The same entries persist as JSON Lines at the configured `LOG_FILE` (by default
-`logs/bridge.log` under the runtime root). The Windows desktop shell writes early startup failures
-to `logs/desktop.log` in a development checkout. Credentials are redacted before logging.
+`logs/bridge.log` under the runtime root):
+
+- Linux packages: `~/.local/state/discord-audio-bridge/logs/bridge.log` (or beneath
+  `$XDG_STATE_HOME` when set).
+- Windows: `logs\bridge.log` beside the unpacked app when that folder is writable, otherwise
+  `%APPDATA%\discord-audio-bridge\logs\bridge.log`.
+- Source checkouts: `logs/bridge.log` in the checkout.
+
+The Logs tab shows the exact active path. The Windows desktop shell also writes early launcher
+failures to `logs/desktop.log` beside the unpacked app. Credentials are redacted before logging.
 
 ### Remote control
 

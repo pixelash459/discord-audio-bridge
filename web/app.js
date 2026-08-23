@@ -124,6 +124,48 @@ function toast(message, kind = '') {
 
 const fail = (error) => toast(error instanceof Error ? error.message : String(error), 'error');
 
+/**
+ * Clipboard access can be unavailable in WebView runtimes or blocked by Firefox permissions.
+ * Keep a selection-based fallback so every packaged build still has a working Copy button.
+ */
+async function copyText(text) {
+  if (!text) throw new Error('There is nothing to copy yet.');
+  if (navigator.clipboard?.writeText) {
+    try {
+      await navigator.clipboard.writeText(text);
+      return;
+    } catch {
+      // Fall through to the selection-based path below.
+    }
+  }
+
+  const input = document.createElement('textarea');
+  input.value = text;
+  input.setAttribute('readonly', '');
+  input.style.position = 'fixed';
+  input.style.inset = '-10000px auto auto -10000px';
+  document.body.append(input);
+  input.select();
+  const copied = document.execCommand('copy');
+  input.remove();
+  if (!copied) throw new Error('Copy was blocked. Use Download report instead.');
+}
+
+function downloadText(filename, content) {
+  const blob = new Blob([content], { type: 'text/plain;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = filename;
+  document.body.append(link);
+  link.click();
+  link.remove();
+  // Firefox may not have consumed the object URL by the time click() returns.
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+const reportTimestamp = () => new Date().toISOString().replace(/[:.]/g, '-');
+
 /* ── formatting ───────────────────────────────────────────────────────────── */
 
 function duration(ms) {
@@ -1216,7 +1258,7 @@ async function loadRemoteInfo() {
     button.textContent = `Copy ${origin}`;
     button.addEventListener('click', async () => {
       try {
-        await navigator.clipboard.writeText(url);
+        await copyText(url);
         toast(`Copied remote URL for ${origin}.`, 'ok');
       } catch (error) {
         fail(error);
@@ -1364,7 +1406,7 @@ $('diag-btn').addEventListener('click', async (event) => {
 
 $('diag-copy').addEventListener('click', async () => {
   try {
-    await navigator.clipboard.writeText(lastReportText);
+    await copyText(lastReportText);
     toast('Diagnostics copied.', 'ok');
   } catch (error) {
     fail(error);
@@ -1419,27 +1461,76 @@ $('log-jump').addEventListener('click', () => {
 function logText() {
   return [...document.querySelectorAll('.log-line')]
     .filter((line) => !line.hidden)
-    .map((line) => line.textContent)
+    .map((line) => line.dataset.copyText ?? line.textContent)
     .join('\n');
+}
+
+function allLogText() {
+  return [...document.querySelectorAll('.log-line')]
+    .map((line) => line.dataset.copyText ?? line.textContent)
+    .join('\n');
+}
+
+async function buildSupportReport() {
+  let diagnostics;
+  try {
+    diagnostics = (await api('diagnostics')).report ?? 'Diagnostics returned no text.';
+  } catch (error) {
+    diagnostics = `Diagnostics failed: ${error instanceof Error ? error.message : String(error)}`;
+  }
+
+  const logs = allLogText();
+  return [
+    'Discord Audio Bridge support report',
+    `Generated: ${new Date().toISOString()}`,
+    `Control UI: ${navigator.userAgent}`,
+    '',
+    '=== Diagnostics ===',
+    diagnostics,
+    '',
+    '=== Recent logs (all levels) ===',
+    logs || 'No log entries are available in this UI session.',
+    '',
+  ].join('\n');
 }
 
 $('log-copy').addEventListener('click', async () => {
   try {
-    await navigator.clipboard.writeText(logText());
-    toast('Log copied.', 'ok');
+    await copyText(logText());
+    toast('Visible log copied.', 'ok');
   } catch (error) {
     fail(error);
   }
 });
 
 $('log-download').addEventListener('click', () => {
-  const blob = new Blob([logText()], { type: 'text/plain' });
-  const url = URL.createObjectURL(blob);
-  const link = document.createElement('a');
-  link.href = url;
-  link.download = `bridge-log-${new Date().toISOString().replace(/[:.]/g, '-')}.txt`;
-  link.click();
-  URL.revokeObjectURL(url);
+  downloadText(`bridge-log-${reportTimestamp()}.txt`, logText());
+});
+
+$('support-copy').addEventListener('click', async (event) => {
+  const button = event.currentTarget;
+  button.disabled = true;
+  try {
+    await copyText(await buildSupportReport());
+    toast('Support report copied. You can paste it into the chat.', 'ok');
+  } catch (error) {
+    fail(error);
+  } finally {
+    button.disabled = false;
+  }
+});
+
+$('support-download').addEventListener('click', async (event) => {
+  const button = event.currentTarget;
+  button.disabled = true;
+  try {
+    downloadText(`discord-audio-bridge-support-${reportTimestamp()}.txt`, await buildSupportReport());
+    toast('Support report downloaded.', 'ok');
+  } catch (error) {
+    fail(error);
+  } finally {
+    button.disabled = false;
+  }
 });
 
 function appendLog(entry) {
@@ -1450,6 +1541,9 @@ function appendLog(entry) {
   const line = document.createElement('div');
   line.className = `log-line ${entry.level}`;
   line.dataset.level = entry.level;
+  line.dataset.copyText = [new Date(entry.at).toISOString(), entry.level, entry.scope, entry.message, entry.extra]
+    .filter(Boolean)
+    .join(' ');
 
   const time = document.createElement('span');
   time.className = 'log-time';

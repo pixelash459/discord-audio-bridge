@@ -21,6 +21,9 @@ All notable changes to this project are documented here. The format follows
 - **First-run wizard.** A three-step guided setup — token, invite, capture helper — that derives its
   current step from server state rather than remembering local progress, so it cannot claim a step
   is finished when it is not. Dismissing it is remembered.
+- **Copyable support reports.** The Logs tab can now copy or download one redacted text report with
+  platform diagnostics and every recent log level. Clipboard fallback keeps Copy working in Linux
+  browsers and packaged WebViews even when the modern clipboard API is unavailable.
 
 ### Fixed
 

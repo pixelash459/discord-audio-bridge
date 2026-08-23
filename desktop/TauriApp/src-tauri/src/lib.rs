@@ -6,7 +6,7 @@ mod tray;
 mod winjob;
 
 use state::{ShellState, StatusPayload};
-use tauri::{AppHandle, Manager, WindowEvent};
+use tauri::{AppHandle, Manager, RunEvent, WindowEvent};
 
 /// The loader screen the window opens on. Once the bridge's control panel answers, the
 /// supervisor navigates the webview to it; everything the user then touches - sources,
@@ -67,8 +67,15 @@ pub fn run() {
             shell_show,
             shell_hello
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application")
+        .run(|app, event| {
+            // On Windows the kill-on-close job object already covers a crashed shell; this
+            // is the Linux equivalent for any exit path we do survive to see.
+            if let RunEvent::Exit = event {
+                bridge::kill_owned_child(&app);
+            }
+        });
 }
 
 fn bridge_supervisor(app: AppHandle) {

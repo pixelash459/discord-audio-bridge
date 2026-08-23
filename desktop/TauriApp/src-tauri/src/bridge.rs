@@ -421,7 +421,7 @@ is CONTROL_PORT disabled, or is the port already taken?",
 
 /// Stop and reap the bridge child this shell owns, if any. Never touches a bridge
 /// started by anyone else.
-fn kill_owned_child(app: &AppHandle) {
+pub fn kill_owned_child(app: &AppHandle) {
     let state = app.state::<ShellState>();
     let mut inner = state.0.lock().unwrap();
     if let Some(mut child) = inner.child.take() {

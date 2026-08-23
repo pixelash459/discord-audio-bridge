@@ -26,6 +26,10 @@ pub fn run() {
 
     builder
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_autostart::init(
+            tauri_plugin_autostart::MacosLauncher::LaunchAgent,
+            None,
+        ))
         .setup(|app| {
             app.manage(ShellState(std::sync::Mutex::new(state::Inner::new())));
             let logs_dir = bridge::bridge_logs_dir();
@@ -65,7 +69,8 @@ pub fn run() {
             shell_retry,
             shell_open_logs,
             shell_show,
-            shell_hello
+            shell_hello,
+            shell_open_panel
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
@@ -138,5 +143,23 @@ fn shell_hello(app: AppHandle, url: String) {
     let mut inner = state.0.lock().unwrap();
     if inner.home_url.is_none() {
         inner.home_url = Some(url);
+    }
+}
+
+/// Manual "open the panel now" from the loader: navigate the main window to the bridge's
+/// panel using its saved endpoint. An escape hatch in case automatic navigation raced.
+#[tauri::command]
+fn shell_open_panel(app: AppHandle) -> Result<(), String> {
+    let url = {
+        let state = app.state::<ShellState>();
+        let inner = state.0.lock().unwrap();
+        inner.endpoint.as_ref().map(|e| e.panel_url())
+    };
+    match url {
+        Some(url) => {
+            bridge::navigate(&app, &url);
+            Ok(())
+        }
+        None => Err("the bridge is not attached yet".into()),
     }
 }

@@ -1,4 +1,4 @@
-use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
+use tauri::menu::{CheckMenuItem, Menu, MenuItem, PredefinedMenuItem};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 use tauri::{AppHandle, Manager};
 
@@ -7,16 +7,28 @@ use crate::state::{tooltip, ShellState, TrayMenu};
 
 /// The tray half is not decoration: this application spends its life hidden, so the icon
 /// has to say what the bridge is doing and the menu has to offer the actions people
-/// actually take. Same three jobs as the WinForms shell it replaces.
+/// actually take. Same jobs as the WinForms shell it replaces, autostart included.
 pub fn create(app: &AppHandle) -> tauri::Result<()> {
     let show = MenuItem::with_id(app, "show", "Show Discord Audio Bridge", true, None::<&str>)?;
     let mute = MenuItem::with_id(app, "mute", "Mute", true, None::<&str>)?;
     let stop = MenuItem::with_id(app, "stop", "Stop stream", true, None::<&str>)?;
     let logs = MenuItem::with_id(app, "logs", "Open logs folder", true, None::<&str>)?;
+    let autostart_enabled = {
+        use tauri_plugin_autostart::ManagerExt;
+        app.autolaunch().is_enabled().unwrap_or(false)
+    };
+    let autostart = CheckMenuItem::with_id(
+        app,
+        "autostart",
+        "Start with your computer",
+        autostart_enabled,
+        true,
+        None::<&str>,
+    )?;
     let separator = PredefinedMenuItem::separator(app)?;
     let quit = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
 
-    let menu = Menu::with_items(app, &[&show, &mute, &stop, &logs, &separator, &quit])?;
+    let menu = Menu::with_items(app, &[&show, &mute, &stop, &logs, &autostart, &separator, &quit])?;
 
     TrayIconBuilder::with_id("main")
         .icon(app.default_window_icon().expect("app icon").clone())
@@ -28,6 +40,7 @@ pub fn create(app: &AppHandle) -> tauri::Result<()> {
             "mute" => bridge::toggle_mute(app),
             "stop" => bridge::stop_stream(app),
             "logs" => open_logs(app),
+            "autostart" => toggle_autostart(app),
             "quit" => bridge::quit(app),
             _ => {}
         })
@@ -45,6 +58,27 @@ pub fn create(app: &AppHandle) -> tauri::Result<()> {
 
     app.manage(TrayMenu { mute });
     Ok(())
+}
+
+/// Mirror the checkbox state into the OS registration: tick = launch at login.
+fn toggle_autostart(app: &AppHandle) {
+    use tauri_plugin_autostart::ManagerExt;
+    let manager = app.autolaunch();
+    let item = app
+        .menu_by_id("autostart")
+        .and_then(|m| m.as_check_menuitem().cloned());
+    let now_enabled = manager.is_enabled().unwrap_or(false);
+    let result = if now_enabled {
+        manager.disable()
+    } else {
+        manager.enable()
+    };
+    if let Err(e) = result {
+        eprintln!("could not change autostart: {e}");
+    }
+    if let Some(item) = item {
+        let _ = item.set_checked(!now_enabled);
+    }
 }
 
 /// Called after every successful state poll: keep tooltip and mute label in step.

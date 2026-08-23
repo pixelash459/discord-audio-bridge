@@ -518,7 +518,7 @@ fn run_attached(app: &AppHandle, endpoint: Endpoint) -> bool {
     }
     emit_status(app);
     navigate(app, &endpoint.panel_url());
-    app.emit("bridge://ready", endpoint.panel_url()).ok();
+    app.emit("bridge-ready", endpoint.panel_url()).ok();
 
     let mut missed = 0u32;
     loop {
@@ -526,6 +526,11 @@ fn run_attached(app: &AppHandle, endpoint: Endpoint) -> bool {
         if is_quitting(app) {
             return true;
         }
+
+        // Navigation can silently do nothing on some webview backends, so watch it: log
+        // every URL change on the main window. This is the difference between "panel is
+        // showing" and "loader claims success while nothing happened".
+        log_url_change(app);
 
         match read_summary(&agent(app), &endpoint) {
             Ok(summary) => {
@@ -704,16 +709,37 @@ pub fn emit_status(app: &AppHandle) {
             panel_url: inner.endpoint.as_ref().map(|e| e.panel_url()),
         }
     };
-    app.emit("bridge://status", payload).ok();
+    app.emit("bridge-status", payload).ok();
 }
 
-/// Navigate the main webview to an absolute URL. The URL is JSON-encoded so no quoting
-/// surprises are possible; the only pages this touches are the shell's own loader and the
-/// bridge's own loopback panel.
+/// Navigate the main webview to an absolute URL. Uses WebviewWindow::navigate - the
+/// sanctioned API - rather than eval(location.replace), which some webview backends
+/// silently ignore for cross-origin targets.
 pub fn navigate(app: &AppHandle, url: &str) {
-    if let Some(window) = app.get_webview_window("main") {
-        if let Ok(encoded) = serde_json::to_string(url) {
-            let _ = window.eval(&format!("location.replace({encoded})"));
+    let Some(window) = app.get_webview_window("main") else { return };
+    match url.parse::<tauri::Url>() {
+        Ok(parsed) => {
+            if let Err(e) = window.navigate(parsed) {
+                eprintln!("navigate to {url} failed: {e}");
+            }
+        }
+        Err(e) => eprintln!("could not parse {url} as a URL: {e}"),
+    }
+}
+
+/// Log the main window's URL whenever it changes. Cheap, permanent, and the one signal
+/// that says the panel really took over the window.
+fn log_url_change(app: &AppHandle) {
+    let current = app
+        .get_webview_window("main")
+        .and_then(|w| w.url().ok().map(|u| u.to_string()));
+    if let Some(current) = current {
+        let state = app.state::<ShellState>();
+        let mut inner = state.0.lock().unwrap();
+        let changed = inner.last_nav_url.as_deref() != Some(current.as_str());
+        if changed {
+            eprintln!("window url -> {current}");
+            inner.last_nav_url = Some(current);
         }
     }
 }

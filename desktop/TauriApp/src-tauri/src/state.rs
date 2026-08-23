@@ -93,6 +93,8 @@ pub struct Inner {
     pub retry: bool,
     /// Where the loader screen lives, remembered so the shell can navigate back to it.
     pub home_url: Option<String>,
+    /// Last observed main-window URL, for navigation-change logging.
+    pub last_nav_url: Option<String>,
     pub logs_dir: Option<PathBuf>,
     /// Loopback HTTP only: no TLS, small pool, short timeouts.
     pub agent: ureq::Agent,
@@ -113,6 +115,7 @@ impl Inner {
             quitting: false,
             retry: false,
             home_url: None,
+            last_nav_url: None,
             logs_dir: None,
             agent: config.into(),
         }

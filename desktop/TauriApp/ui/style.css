@@ -115,6 +115,10 @@ button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 
 .logs summary { color: var(--muted); cursor: pointer; }
 
+.hint-left { margin: 0 0 4px; color: var(--muted); font-size: 13px; }
+
+.errorbox { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+
 .hint {
   margin: 0;
   text-align: center;

@@ -9,7 +9,7 @@ const listen = tauri?.event?.listen;
 const PHASE_TEXT = {
   locating: 'Looking for a running bridge…',
   starting: 'Starting the bridge…',
-  attached: 'Connected',
+  attached: 'Connected - opening the control panel…',
   failed: 'Could not reach the bridge',
 };
 
@@ -17,12 +17,16 @@ const spinner = document.getElementById('spinner');
 const phaseEl = document.getElementById('phase');
 const detailEl = document.getElementById('detail');
 const errorbox = document.getElementById('errorbox');
+const panelbox = document.getElementById('panelbox');
 const logsdetails = document.getElementById('logsdetails');
 const logsEl = document.getElementById('logs');
+
+let lastPhase = '';
 
 function render(status) {
   const phase = String(status?.phase ?? 'locating');
   const detail = String(status?.detail ?? '');
+  lastPhase = phase;
 
   phaseEl.textContent = PHASE_TEXT[phase] ?? phase;
   detailEl.textContent = detail || 'the control panel will appear here';
@@ -32,6 +36,17 @@ function render(status) {
   errorbox.hidden = !failed;
   logsdetails.hidden = !failed;
   if (failed) void refreshLogs();
+
+  // If we say "attached" but are still on this page a moment later, automatic navigation
+  // lost the race - offer a manual way in instead of an eternal spinner.
+  panelbox.hidden = phase !== 'attached';
+  if (phase === 'attached') {
+    window.setTimeout(() => {
+      if (lastPhase === 'attached' && document.visibilityState === 'visible') {
+        panelbox.hidden = false;
+      }
+    }, 4000);
+  }
 }
 
 async function refreshLogs() {
@@ -52,7 +67,7 @@ async function boot() {
 
   if (listen) {
     try {
-      await listen('bridge://status', (event) => render(event.payload));
+      await listen('bridge-status', (event) => render(event.payload));
     } catch { /* keep polling below as the fallback */ }
     window.setInterval(async () => {
       // Only poll while still on the loader; once the panel loads this page is gone.
@@ -67,6 +82,10 @@ document.getElementById('retry')?.addEventListener('click', () => {
 
 document.getElementById('openlogs')?.addEventListener('click', () => {
   if (invoke) void invoke('shell_open_logs').catch(() => undefined);
+});
+
+document.getElementById('openpanel')?.addEventListener('click', () => {
+  if (invoke) void invoke('shell_open_panel').catch(() => undefined);
 });
 
 boot();

@@ -20,6 +20,7 @@ tauri = { version = "2.11", features = ["tray-icon"] }
 tauri-plugin-global-shortcut = "2.3"
 tauri-plugin-single-instance = "2.4"
 tauri-plugin-opener = "2.5"
+tauri-plugin-autostart = "2.5"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 # HTTP for the loopback control API only (127.0.0.1): no TLS stack needed, keep it lean.

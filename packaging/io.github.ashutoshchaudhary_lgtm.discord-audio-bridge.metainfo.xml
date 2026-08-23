@@ -29,6 +29,9 @@
   <url type="homepage">https://github.com/AshutoshChaudhary-lgtm/discord-audio-bridge</url>
   <url type="bugtracker">https://github.com/AshutoshChaudhary-lgtm/discord-audio-bridge/issues</url>
   <releases>
+    <release version="1.4.1" date="2026-08-23">
+      <description><p>Completes Discord sign-in before reporting success, detects stale processes after upgrades, derives the application ID automatically, and improves Linux PipeWire diagnostics.</p></description>
+    </release>
     <release version="1.4.0" date="2026-08-23">
       <description><p>Adds local monitoring, voice-channel following, a first-run wizard, and repairs Linux PipeWire browser-source discovery.</p></description>
     </release>

@@ -228,6 +228,25 @@ fn start_child(app: &AppHandle, program: &Path, args: &[PathBuf], cwd: &Path) ->
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
+
+    // The Unix twin of the Windows kill-on-close job: the kernel signals the child when this
+    // process dies, which covers SIGKILL and SIGTERM - exits that never reach our cleanup code.
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        unsafe {
+            command.pre_exec(|| {
+                if libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGTERM, 0, 0, 0) != 0 {
+                    return Err(std::io::Error::last_os_error());
+                }
+                // Close the fork race: if the parent died between fork and prctl, follow it now.
+                if libc::getppid() == 1 {
+                    libc::_exit(0);
+                }
+                Ok(())
+            });
+        }
+    }
     let mut child = command
         .spawn()
         .map_err(|e| format!("could not start {}: {e}", program.display()))?;

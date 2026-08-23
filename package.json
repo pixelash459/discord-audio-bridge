@@ -1,6 +1,6 @@
 {
   "name": "discord-audio-bridge",
-  "version": "1.3.0",
+  "version": "1.3.1",
   "description": "Streams applications, devices, or live mixes from Windows and Linux into Discord voice channels.",
   "type": "module",
   "private": true,
@@ -12,7 +12,7 @@
     "dev": "node --watch src/index.ts",
     "register": "node src/register.ts",
     "typecheck": "tsc --noEmit",
-    "lint:web": "html-validate web/index.html remote/index.html && node --check web/app.js && node --check remote/app.js",
+    "lint:web": "html-validate web/index.html remote/index.html && node --check web/boot-guard.js && node --check web/app.js && node --check remote/app.js",
     "build:native": "powershell -ExecutionPolicy Bypass -File scripts/build-native.ps1",
     "doctor": "node src/doctor.ts",
     "build:app": "powershell -ExecutionPolicy Bypass -File scripts/build-app.ps1",

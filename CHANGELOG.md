@@ -6,6 +6,16 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [1.3.1] - 2026-08-23
+
+### Fixed
+
+- Restored every control-panel interaction when the application is opened with its authentication
+  fragment. The meter trend map no longer shadows the browser's `history` global during module
+  startup, which had aborted JavaScript before tab and button handlers were registered.
+- Added an independent startup guard that displays browser-side initialization failures and offers
+  a reload action instead of leaving a fully rendered but inert interface.
+
 ## [1.3.0] - 2026-08-23
 
 ### Added
@@ -219,7 +229,8 @@ First release.
 - ffmpeg's Ogg muxer defaults to one-second pages, which starves the Discord player. This project
   sets `-page_duration 20000`; measured, that is 163 ms to first packet versus 3186 ms.
 
-[Unreleased]: https://github.com/AshutoshChaudhary-lgtm/discord-audio-bridge/compare/v1.3.0...HEAD
+[Unreleased]: https://github.com/AshutoshChaudhary-lgtm/discord-audio-bridge/compare/v1.3.1...HEAD
+[1.3.1]: https://github.com/AshutoshChaudhary-lgtm/discord-audio-bridge/compare/v1.3.0...v1.3.1
 [1.3.0]: https://github.com/AshutoshChaudhary-lgtm/discord-audio-bridge/compare/v1.2.1...v1.3.0
 [1.2.1]: https://github.com/AshutoshChaudhary-lgtm/discord-audio-bridge/compare/v1.2.0...v1.2.1
 [1.2.0]: https://github.com/AshutoshChaudhary-lgtm/discord-audio-bridge/compare/v1.1.3...v1.2.0

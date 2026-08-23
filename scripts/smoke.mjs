@@ -10,6 +10,7 @@ import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { parseEnv } from 'node:util';
+import { runInNewContext } from 'node:vm';
 
 process.env.DISCORD_TOKEN ||= 'smoke-test-placeholder';
 process.env.DISCORD_APP_ID ||= '0';
@@ -304,6 +305,67 @@ if (!/\[hidden\]\s*\{[^}]*display:\s*none\s*!important\s*;/s.test(stylesheet)) {
 // that permanently caches the empty pre-ready guild list.
 const webApp = await readFile(new URL('../web/app.js', import.meta.url), 'utf8');
 const webPage = await readFile(new URL('../web/index.html', import.meta.url), 'utf8');
+const webBootGuard = await readFile(new URL('../web/boot-guard.js', import.meta.url), 'utf8');
+
+// Application launches always contain a token fragment. A module-scoped `history` binding is in
+// its temporal dead zone when startup calls history.replaceState(), aborting the script before
+// tabs and buttons receive handlers even though the static page looks healthy.
+if (webApp.includes('const history =')) {
+  failed++;
+  process.stdout.write('  FAIL  control UI does not shadow window.history during token startup\n');
+} else {
+  process.stdout.write('  ok    control UI does not shadow window.history during token startup\n');
+}
+
+// Execute the actual browser module's synchronous startup with a tokenized launch URL. Network
+// access intentionally never resolves: this test is about proving evaluation reaches the point
+// where all static controls have installed their handlers.
+{
+  let replaced = false;
+  let handlers = 0;
+  const element = { addEventListener: () => (handlers += 1) };
+  const never = new Promise(() => undefined);
+  try {
+    runInNewContext(webApp, {
+      URL,
+      URLSearchParams,
+      location: { href: 'http://127.0.0.1:8787/#token=smoke-control-token-1234567890' },
+      sessionStorage: { setItem: () => undefined, getItem: () => '' },
+      history: { replaceState: () => (replaced = true) },
+      document: {
+        getElementById: () => element,
+        querySelector: () => element,
+        addEventListener: () => (handlers += 1),
+      },
+      fetch: () => never,
+      setInterval: () => 1,
+      setTimeout: () => 1,
+      clearTimeout: () => undefined,
+      console,
+    });
+  } catch (error) {
+    failed++;
+    process.stdout.write(`  FAIL  tokenized control UI startup (${error instanceof Error ? error.message : error})\n`);
+  }
+  if (!replaced || handlers < 10) {
+    failed++;
+    process.stdout.write(`  FAIL  tokenized control UI installs handlers (${handlers} found)\n`);
+  } else {
+    process.stdout.write(`  ok    tokenized control UI installs handlers (${handlers} found)\n`);
+  }
+}
+
+if (
+  !webPage.includes('src="/boot-guard.js"') ||
+  !webPage.includes('id="disconnected-reload"') ||
+  !webBootGuard.includes("window.addEventListener('error'")
+) {
+  failed++;
+  process.stdout.write('  FAIL  control UI surfaces module startup failures\n');
+} else {
+  process.stdout.write('  ok    control UI surfaces module startup failures\n');
+}
+
 if (webApp.includes("if (state.capabilities?.platform === 'linux')")) {
   failed++;
   process.stdout.write('  FAIL  source renderer uses snapshot state safely\n');

@@ -684,13 +684,15 @@ $('save-route-btn').addEventListener('click', async () => {
 
 const cards = new Map();
 /** 60 seconds of buffer-fill and ping per guild, for the trend strip. */
-const history = new Map();
+// Do not call this `history`: that shadows window.history across the entire module and makes token
+// scrubbing throw before any controls have registered their event handlers.
+const sessionHistory = new Map();
 
 function trendFor(guildId) {
-  let series = history.get(guildId);
+  let series = sessionHistory.get(guildId);
   if (!series) {
     series = { buffer: [], ping: [] };
-    history.set(guildId, series);
+    sessionHistory.set(guildId, series);
   }
   return series;
 }
@@ -937,7 +939,7 @@ function renderSessions(sessions) {
     if (!live.has(guildId)) {
       card.remove();
       cards.delete(guildId);
-      history.delete(guildId);
+      sessionHistory.delete(guildId);
     }
   }
   for (const session of sessions) renderSession(session);

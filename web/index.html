@@ -16,8 +16,9 @@
     <div id="disconnected" class="overlay" role="status" aria-live="polite" hidden>
       <div class="overlay-card">
         <div class="spinner"></div>
-        <h2>Waiting for the bot</h2>
+        <h2 id="disconnected-title">Waiting for the bot</h2>
         <p id="disconnected-detail">Reconnecting to the control server…</p>
+        <button id="disconnected-reload" class="btn ghost" type="button" hidden>Reload panel</button>
       </div>
     </div>
 
@@ -457,6 +458,7 @@
       </article>
     </template>
 
+    <script src="/boot-guard.js"></script>
     <script type="module" src="/app.js"></script>
   </body>
 </html>

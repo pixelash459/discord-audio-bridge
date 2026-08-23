@@ -694,6 +694,9 @@ input[type="range"] {
   color: var(--text-dim);
   font-size: 13px;
 }
+.overlay-card .btn {
+  margin-top: 16px;
+}
 
 .spinner {
   width: 26px;

@@ -6,6 +6,32 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Fixed
+
+- **Sign-in reported success before the session existed.** `client.login()` resolves when Discord
+  accepts the token, not when the connection is usable, so the panel announced "Signed in" and then
+  immediately rendered "Not signed in to Discord" with a yellow connecting dot. Sign-in now waits
+  for `ClientReady`.
+- **"Try again" broke the connection it was waiting for.** A second sign-in while the first was
+  still connecting started a second `login()`, and that failure path resets the client - destroying
+  the working connection. Concurrent attempts now join the one in flight.
+- **An in-place upgrade left an old server serving new files.** The panel is read from disk on every
+  request while routes are compiled into the running process, so upgrading without restarting
+  produced unexplained 404s (`No route for GET /api/presets`) instead of an explanation. The running
+  build and the on-disk asset version are now compared, and a mismatch says so.
+- **Linux source discovery failed silently.** Diagnostics probed `pw-record` but never `pw-dump`,
+  which is what actually enumerates sources - so an install that could not list a single
+  application still reported a clean bill of health. `pw-dump` is now probed, and reports how many
+  application streams and output devices are visible.
+- **Per-application capture hinged on `pw-dump --help` exiting 0.** A version that returns non-zero
+  would have emptied the entire source list with no error shown. Only the spawn is checked now.
+
+### Changed
+
+- **`DISCORD_APP_ID` is no longer required.** A bot token already identifies its application, so it
+  is resolved from the token; the field remains as an override. The first-run wizard now asks for
+  the token alone.
+
 ## [1.4.0] - 2026-08-23
 
 ### Added

@@ -198,8 +198,12 @@ export const config = {
     get token() {
       return required('DISCORD_TOKEN');
     },
+    /**
+     * Optional. The bot token already identifies its application, so this is only needed when the
+     * two are deliberately different; command registration resolves it from the token otherwise.
+     */
     get appId() {
-      return required('DISCORD_APP_ID');
+      return optional('DISCORD_APP_ID');
     },
     get guildId() {
       return optional('DISCORD_GUILD_ID');

@@ -515,6 +515,79 @@ if (!webApp.includes('function wizardStep(') || !webPage.includes('id="wizard"')
   process.stdout.write('  ok    first-run wizard is state-derived\n');
 }
 
+const signinSource = await readFile(new URL('../src/signin.ts', import.meta.url), 'utf8');
+const diagnosticsSource = await readFile(new URL('../src/diagnostics.ts', import.meta.url), 'utf8');
+const registrationSource = await readFile(new URL('../src/registration.ts', import.meta.url), 'utf8');
+
+// client.login() resolves when the gateway accepts the token, well before READY. Returning there
+// made the panel announce "signed in" and then immediately render "not signed in to Discord".
+if (
+  !signinSource.includes('waitForReady') ||
+  !/Events\.ClientReady/.test(signinSource) ||
+  !/await waitForReady\(client\)/.test(signinSource)
+) {
+  failed++;
+  process.stdout.write('  FAIL  sign-in waits for READY, not just login\n');
+} else {
+  process.stdout.write('  ok    sign-in waits for READY, not just login\n');
+}
+
+// A second login() on a client that is mid-handshake fails, and the failure path resets the
+// client - so "Try again" used to destroy the connection it was waiting for.
+if (
+  !/if \(pending\)[\s\S]{0,120}return pending/.test(signinSource) ||
+  !/pending = attempt\(client\)/.test(signinSource)
+) {
+  failed++;
+  process.stdout.write('  FAIL  concurrent sign-in joins the attempt in flight\n');
+} else {
+  process.stdout.write('  ok    concurrent sign-in joins the attempt in flight\n');
+}
+
+// An in-place upgrade leaves an old server serving new assets; without a version handshake the
+// only symptom is unexplained 404s from routes the running build has never heard of.
+if (
+  !webApp.includes('renderStaleBuild') ||
+  !webPage.includes('id="stale-build"') ||
+  !apiSource.includes('version: versionInfo()')
+) {
+  failed++;
+  process.stdout.write('  FAIL  panel reports a stale server build\n');
+} else {
+  process.stdout.write('  ok    panel reports a stale server build\n');
+}
+
+// pw-record proves capture; pw-dump is what enumerates sources, and it is the half that fails
+// when the bridge cannot reach the desktop session.
+if (!diagnosticsSource.includes("id: 'pipewire-dump'")) {
+  failed++;
+  process.stdout.write('  FAIL  diagnostics probe pw-dump, not just pw-record\n');
+} else {
+  process.stdout.write('  ok    diagnostics probe pw-dump, not just pw-record\n');
+}
+
+// The capture gate must not hinge on pw-dump's --help exit status: a version that returns
+// non-zero there would silently empty the entire source list.
+if (/dump\.status === 0/.test(pipewireSource)) {
+  failed++;
+  process.stdout.write('  FAIL  pipewire gate tolerates pw-dump --help exit status\n');
+} else {
+  process.stdout.write('  ok    pipewire gate tolerates pw-dump --help exit status\n');
+}
+
+// A bot token already identifies its application; requiring the id separately only adds a way to
+// get it wrong.
+if (
+  !registrationSource.includes('Routes.currentApplication()') ||
+  !/appId \?\? \(await resolveAppId\(rest\)\)/.test(registrationSource) ||
+  webPage.includes('id="wizard-appid"')
+) {
+  failed++;
+  process.stdout.write('  FAIL  application id is derived from the bot token\n');
+} else {
+  process.stdout.write('  ok    application id is derived from the bot token\n');
+}
+
 // Source discovery should be push-driven; a spawn-per-tick poll is the thing being replaced.
 if (/setInterval\([\s\S]{0,200}loadSources\(\)[\s\S]{0,40}\}, 10_000\)/.test(webApp)) {
   failed++;

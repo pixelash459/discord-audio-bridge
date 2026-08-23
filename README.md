@@ -387,7 +387,7 @@ runtime root, so it has only one `.env`.
 | Variable | Default | Notes |
 | --- | --- | --- |
 | `DISCORD_TOKEN` | — | Required. |
-| `DISCORD_APP_ID` | — | Required. |
+| `DISCORD_APP_ID` | — | Optional. Resolved from the bot token; set it only when the token and the application deliberately differ. |
 | `DISCORD_GUILD_ID` | — | Register commands to one guild instantly instead of globally. |
 | `OPUS_BITRATE` | match channel | Bits per second. Opus permits up to 510000; exceeding the channel bitrate mostly wastes upstream bandwidth. |
 | `OPUS_VBR` | `on` | `on` = unconstrained VBR, best quality. `constrained` bounds peaks. `off` = CBR. |

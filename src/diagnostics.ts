@@ -4,6 +4,7 @@ import { generateDependencyReport } from '@discordjs/voice';
 import { captureBackend } from './audio/tap.ts';
 import { config } from './config.ts';
 import { IS_WINDOWS } from './platform.ts';
+import { parsePipewireDump } from './audio/pipewire.ts';
 
 export type CheckStatus = 'ok' | 'warn' | 'fail';
 
@@ -154,6 +155,45 @@ export function collectChecks(): Check[] {
             remedy: 'apt install pipewire-bin (Debian/Ubuntu) or dnf install pipewire-utils (Fedora).',
           },
     );
+
+    // pw-record proves the capture half; pw-dump is what actually enumerates sources, and it is
+    // the half that fails when the bridge cannot reach the desktop audio session. Probing only
+    // pw-record made an empty Applications list look like a healthy install.
+    const dump = probe(config.paths.pwDump, []);
+    if (!dump.ok) {
+      checks.push({
+        id: 'pipewire-dump',
+        label: 'PipeWire graph',
+        status: 'fail',
+        detail: dump.firstLine || `pw-dump failed at "${config.paths.pwDump}"`,
+        remedy:
+          'Sources cannot be listed. Install pipewire-bin, and run the bridge as the signed-in ' +
+          'desktop user: a system service cannot reach the desktop PipeWire session.',
+      });
+    } else {
+      let streams = 0;
+      let sinks = 0;
+      try {
+        for (const node of parsePipewireDump(dump.output)) {
+          const mediaClass = node.info?.props?.['media.class'];
+          if (mediaClass === 'Stream/Output/Audio') streams++;
+          else if (mediaClass === 'Audio/Sink') sinks++;
+        }
+      } catch {
+        // Fall through to the counts we have; a malformed graph is reported as zero of each.
+      }
+      checks.push({
+        id: 'pipewire-dump',
+        label: 'PipeWire graph',
+        status: sinks === 0 ? 'warn' : 'ok',
+        detail: `${streams} application stream${streams === 1 ? '' : 's'}, ${sinks} output device${sinks === 1 ? '' : 's'}`,
+        ...(sinks === 0
+          ? { remedy: 'No output devices are visible. Check that PipeWire and WirePlumber are running for this user.' }
+          : streams === 0
+            ? { remedy: 'Applications appear only while they are actually playing audio. Start playback, then refresh.' }
+            : {}),
+      });
+    }
   }
 
   const ffplay = probe(config.paths.ffplay, ['-version']);

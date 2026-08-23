@@ -46,10 +46,6 @@
             <span class="label">Bot token</span>
             <input id="wizard-token" type="password" autocomplete="new-password" placeholder="paste the bot token" />
           </label>
-          <label class="field">
-            <span class="label">Application ID <span class="muted">(General Information)</span></span>
-            <input id="wizard-appid" type="text" inputmode="numeric" autocomplete="off" />
-          </label>
           <p id="wizard-error" class="notice error" hidden></p>
           <div class="wizard-actions">
             <button id="wizard-skip" class="btn ghost" type="button">I'll do this later</button>
@@ -119,6 +115,13 @@
         </div>
       </div>
     </header>
+
+    <div id="stale-build" class="banner error" hidden>
+      <div class="banner-body">
+        <strong id="stale-title">Restart Discord Audio Bridge</strong>
+        <span id="stale-detail"></span>
+      </div>
+    </div>
 
     <div id="onboarding" class="banner" hidden>
       <div class="banner-body">
@@ -245,7 +248,7 @@
             </label>
             <div class="two-up">
               <label class="field">
-                <span class="label">Application ID</span>
+                <span class="label">Application ID <span class="muted">(optional)</span></span>
                 <input id="cfg-DISCORD_APP_ID" type="text" inputmode="numeric" autocomplete="off" />
               </label>
               <label class="field">

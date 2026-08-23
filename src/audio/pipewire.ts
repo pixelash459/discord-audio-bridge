@@ -32,12 +32,17 @@ export function pipewireAvailable(): boolean {
     windowsHide: true,
   });
   // Unlike pw-record, pw-dump does not consistently implement --version. --help is the portable,
-  // side-effect-free existence probe documented by PipeWire and does not require a live graph.
+  // side-effect-free existence probe and does not require a live graph.
+  //
+  // Only the spawn is checked, not the exit status: this gate decides whether per-application
+  // capture is offered at all, so a version whose --help returns non-zero would silently empty
+  // the entire source list. A binary that runs exists; whether the graph can be read is a
+  // separate question, answered by the enumeration itself and reported as an error there.
   const dump = spawnSync(config.paths.pwDump, ['--help'], {
     encoding: 'utf8',
     windowsHide: true,
   });
-  const value = !record.error && record.status === 0 && !dump.error && dump.status === 0;
+  const value = !record.error && record.status === 0 && !dump.error;
   availability = { value, expires: Date.now() + 5_000 };
   return value;
 }

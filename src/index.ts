@@ -377,7 +377,7 @@ async function main(openPanel = false): Promise<void> {
       log.error(
         hasToken()
           ? 'Fix DISCORD_TOKEN in .env and start again.'
-          : 'Put DISCORD_TOKEN and DISCORD_APP_ID in .env (copy .env.example), then start again.',
+          : 'Put DISCORD_TOKEN in .env (copy .env.example), then start again.',
       );
       process.exit(1);
     }

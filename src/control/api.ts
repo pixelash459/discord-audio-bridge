@@ -28,6 +28,7 @@ import {
 } from '../voice/session.ts';
 import { readConfig, writeConfig, RESTART_REQUIRED_KEYS, type EditableKey } from './envFile.ts';
 import { authStatus, signIn } from '../signin.ts';
+import { versionInfo, type VersionInfo } from '../version.ts';
 import { remoteAccessInfo } from '../remote/server.ts';
 import { registerCommands } from '../registration.ts';
 import {
@@ -66,6 +67,9 @@ export interface GuildView {
 }
 
 export interface Snapshot {
+  /** Running build vs. the assets on disk, so an in-place upgrade that left an old server
+   *  running is reported as such instead of appearing as unexplained 404s. */
+  version: VersionInfo;
   bot: {
     ready: boolean;
     tag: string | null;
@@ -134,6 +138,7 @@ export async function buildSnapshot(client: Client): Promise<Snapshot> {
   const backend = captureBackend();
 
   return {
+    version: versionInfo(),
     bot: {
       ready: client.isReady(),
       tag: client.user?.tag ?? null,
@@ -649,7 +654,7 @@ export async function handleApi(client: Client, req: IncomingMessage, url: URL):
 
     case 'POST /api/setup/register-commands':
       try {
-        const result = await registerCommands();
+        const result = await registerCommands(client.application?.id);
         return {
           ok: true,
           output: `Registered ${result.count} commands ${result.scope}: ${result.names.join(', ')}`,

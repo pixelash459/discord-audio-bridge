@@ -1047,10 +1047,38 @@ function render(state) {
     if (state.inviteUrl) element.href = state.inviteUrl;
   }
 
-  renderWizard(state);
+  const stale = renderStaleBuild(state.version);
+  renderWizard(state, stale);
   renderOnboarding(state.bot);
   renderSessions(state.sessions);
   updateStartButton();
+}
+
+/* ── build mismatch ───────────────────────────────────────────────────────── */
+
+/**
+ * Detects an old server process serving new files.
+ *
+ * The panel is static HTML read from disk on every request; the endpoints it calls are compiled
+ * into the running executable. Upgrading in place therefore replaces this file while leaving the
+ * old server running until it is restarted, and the only symptom is newer JavaScript calling
+ * routes the old build has never heard of - which arrives as a stream of unexplained 404 toasts
+ * rather than as "restart me". Saying so directly is the entire fix.
+ */
+function renderStaleBuild(version) {
+  const banner = $('stale-build');
+  if (!version || !version.stale) {
+    banner.hidden = true;
+    return false;
+  }
+
+  banner.hidden = false;
+  $('stale-detail').textContent =
+    `This panel comes from version ${version.assets}, but the bridge that is running is ` +
+    `version ${version.running}. The upgrade replaced the files on disk without restarting the ` +
+    'process, so newer controls are calling endpoints the running build does not have. Quit ' +
+    'Discord Audio Bridge and start it again.';
+  return true;
 }
 
 /* ── first-run wizard ─────────────────────────────────────────────────────── */
@@ -1093,12 +1121,13 @@ function wizardStep(state) {
   return 0;
 }
 
-function renderWizard(state) {
+function renderWizard(state, stale = false) {
   const wizard = $('wizard');
   const step = wizardStep(state);
 
-  // Never reopen once dismissed, and never open for an install that is already working.
-  if (wizardDismissed || (step === 0 && wizard.hidden)) {
+  // Never reopen once dismissed, never open for an install that is already working, and never
+  // walk someone through setup against a server that is about to be restarted anyway.
+  if (stale || wizardDismissed || (step === 0 && wizard.hidden)) {
     wizard.hidden = true;
     return;
   }
@@ -1130,19 +1159,18 @@ $('wizard-save').addEventListener('click', async () => {
   const button = $('wizard-save');
   const error = $('wizard-error');
   const token = $('wizard-token').value.trim();
-  const appId = $('wizard-appid').value.trim();
 
   error.hidden = true;
-  if (!token || !appId) {
+  if (!token) {
     error.hidden = false;
-    error.textContent = 'Both the bot token and the application ID are needed.';
+    error.textContent = 'Paste the bot token to continue.';
     return;
   }
 
   button.disabled = true;
   button.textContent = 'Signing in…';
   try {
-    await post('config', { DISCORD_TOKEN: token, DISCORD_APP_ID: appId });
+    await post('config', { DISCORD_TOKEN: token });
     $('wizard-token').value = '';
     await post('signin');
     configLoaded = false;

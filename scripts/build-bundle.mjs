@@ -15,6 +15,13 @@ const entry = fileURLToPath(new URL('../src/index.ts', import.meta.url));
 const outfile = fileURLToPath(new URL('../dist/bridge.cjs', import.meta.url));
 const shim = fileURLToPath(new URL('./davey-shim.cjs', import.meta.url));
 
+// Stamp the manifest version into the binary. A running process is the only thing that can say
+// which build it is; comparing that against the package.json shipped beside the web assets is how
+// an in-place upgrade that left an old server running gets reported instead of silently 404ing.
+const { version } = JSON.parse(
+  await readFile(fileURLToPath(new URL('../package.json', import.meta.url)), 'utf8'),
+);
+
 // In a CommonJS bundle esbuild replaces import.meta with {}, so dependencies that anchor a
 // require() at import.meta.url (@discordjs/voice does, for davey) would call
 // createRequire(undefined). createRequire also accepts a plain absolute path; pointed at the
@@ -31,6 +38,7 @@ await build({
   format: 'cjs',
   outfile,
   sourcemap: false,
+  define: { __BRIDGE_BUILD_VERSION__: JSON.stringify(version) },
   keepNames: true, // class/function names appear in logs; minification is not worth losing them
   external: ['ffmpeg-static'],
   plugins: [

@@ -56,7 +56,7 @@ pub fn create(app: &AppHandle) -> tauri::Result<()> {
         })
         .build(app)?;
 
-    app.manage(TrayMenu { mute });
+    app.manage(TrayMenu { mute, autostart });
     Ok(())
 }
 
@@ -64,9 +64,6 @@ pub fn create(app: &AppHandle) -> tauri::Result<()> {
 fn toggle_autostart(app: &AppHandle) {
     use tauri_plugin_autostart::ManagerExt;
     let manager = app.autolaunch();
-    let item = app
-        .menu_by_id("autostart")
-        .and_then(|m| m.as_check_menuitem().cloned());
     let now_enabled = manager.is_enabled().unwrap_or(false);
     let result = if now_enabled {
         manager.disable()
@@ -76,8 +73,8 @@ fn toggle_autostart(app: &AppHandle) {
     if let Err(e) = result {
         eprintln!("could not change autostart: {e}");
     }
-    if let Some(item) = item {
-        let _ = item.set_checked(!now_enabled);
+    if let Some(menu) = app.try_state::<TrayMenu>() {
+        let _ = menu.autostart.set_checked(!now_enabled);
     }
 }
 

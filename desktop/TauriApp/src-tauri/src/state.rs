@@ -137,7 +137,8 @@ impl Inner {
 
 pub struct ShellState(pub Mutex<Inner>);
 
-/// Stored handles for tray menu items whose labels change with bridge state.
+/// Stored handles for tray menu items whose state changes at runtime.
 pub struct TrayMenu {
     pub mute: tauri::menu::MenuItem<tauri::Wry>,
+    pub autostart: tauri::menu::CheckMenuItem<tauri::Wry>,
 }

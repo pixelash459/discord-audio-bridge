@@ -76,8 +76,15 @@ fn runtime_root() -> PathBuf {
 }
 
 /// Where the bridge's persistent log lives, for the tray's "Open logs folder" action.
+/// Prefers a logs directory that actually exists among the candidate roots.
 pub fn bridge_logs_dir() -> PathBuf {
-    runtime_root().join("logs")
+    for root in control_token_candidates() {
+        let logs = root.join("logs");
+        if logs.is_dir() {
+            return logs;
+        }
+    }
+    user_state_dir().join("logs")
 }
 
 fn is_writable(dir: &Path) -> bool {
@@ -104,11 +111,36 @@ fn user_state_dir() -> PathBuf {
 
 /* ── endpoint discovery ───────────────────────────────────────────────────── */
 
+/// Every place a running bridge may have written its `.control-token`. The bridge writes
+/// the file into ITS runtime root, which differs by how it was started: a checkout run
+/// via npm start uses the project dir, a packaged install uses the per-user state dir.
+/// Probing only one of those is why the shell used to spawn a duplicate bridge on top of
+/// a perfectly healthy system install.
+fn control_token_candidates() -> Vec<PathBuf> {
+    let mut roots: Vec<PathBuf> = Vec::new();
+    if let Ok(root) = env::var("BRIDGE_RUNTIME_ROOT") {
+        let root = root.trim();
+        if !root.is_empty() {
+            roots.push(PathBuf::from(root));
+        }
+    }
+    if let Some(project) = find_project_root() {
+        roots.push(project);
+    }
+    roots.push(user_state_dir());
+    let mut seen = std::collections::HashSet::new();
+    roots.retain(|r| seen.insert(r.clone()));
+    roots
+}
+
 /// Read and validate `.control-token`, then prove the bridge behind it answers with a
 /// snapshot - the same contract as findRunningControlPanel() in src/control/launcher.ts.
 /// A stale file after a crash is normal and simply means "not attachable".
 fn probe_saved_endpoint(agent: &ureq::Agent) -> Option<Endpoint> {
-    let path = runtime_root().join(".control-token");
+    let path = control_token_candidates()
+        .iter()
+        .map(|root| root.join(".control-token"))
+        .find(|p| p.is_file())?;
     let raw = fs::read_to_string(path).ok()?;
     let saved: Value = serde_json::from_str(&raw).ok()?;
     let port = saved.get("port")?.as_u64()?;

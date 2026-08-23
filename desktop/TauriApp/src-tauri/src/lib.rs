@@ -48,7 +48,8 @@ pub fn run() {
                 let app = window.app_handle();
                 let quitting = {
                     let state = app.state::<ShellState>();
-                    state.0.lock().unwrap().quitting
+                    let inner = state.0.lock().unwrap();
+                    inner.quitting
                 };
                 if !quitting {
                     // Hide to the tray, exactly like the WinForms shell: music keeps
@@ -90,7 +91,8 @@ fn shell_status(app: AppHandle) -> StatusPayload {
 #[tauri::command]
 fn shell_logs(app: AppHandle) -> String {
     let state = app.state::<ShellState>();
-    state.0.lock().unwrap().logs.clone()
+    let inner = state.0.lock().unwrap();
+    inner.logs.clone()
 }
 
 /// Retry from the failure screen: nudges the supervisor out of its post-failure backoff.
@@ -107,7 +109,8 @@ fn shell_retry(app: AppHandle) {
 fn shell_open_logs(app: AppHandle) -> Result<(), String> {
     let dir = {
         let state = app.state::<ShellState>();
-        state.0.lock().unwrap().logs_dir.clone()
+        let inner = state.0.lock().unwrap();
+        inner.logs_dir.clone()
     };
     let Some(dir) = dir else {
         return Err("logs folder is not known yet".into());

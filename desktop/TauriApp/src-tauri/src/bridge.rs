@@ -124,7 +124,7 @@ fn probe_saved_endpoint(agent: &ureq::Agent) -> Option<Endpoint> {
     }
 
     let endpoint = Endpoint { port: port as u16, token: token.into() };
-    let response = agent
+    let mut response = agent
         .get(&endpoint.state_url())
         .header("Authorization", &format!("Bearer {}", endpoint.token))
         .call()
@@ -207,16 +207,11 @@ fn start_child(app: &AppHandle, program: &Path, args: &[PathBuf], cwd: &Path) ->
 
     // Both pipes must be drained or the child blocks once its output buffer fills. Lines are
     // kept in a short ring buffer so the failure screen can show why a start went wrong.
-    for pipe in [child.stdout.take(), child.stderr.take()] {
-        if let Some(pipe) = pipe {
-            let app = app.clone();
-            thread::spawn(move || {
-                for line in BufReader::new(pipe).lines().map_while(Result::ok) {
-                    let state = app.state::<ShellState>();
-                    state.0.lock().unwrap().push_log(&line);
-                }
-            });
-        }
+    if let Some(stdout) = child.stdout.take() {
+        drain_pipe(app, stdout);
+    }
+    if let Some(stderr) = child.stderr.take() {
+        drain_pipe(app, stderr);
     }
 
     #[cfg(windows)]
@@ -228,6 +223,19 @@ fn start_child(app: &AppHandle, program: &Path, args: &[PathBuf], cwd: &Path) ->
     }
 
     Ok(child)
+}
+
+/// Drain a child output pipe on its own thread, keeping lines in the shell's log ring buffer.
+/// ChildStdout and ChildStderr are distinct types, so this is generic over Read + Send.
+fn drain_pipe(app: &AppHandle, pipe: impl std::io::Read + Send + 'static) {
+    let app = app.clone();
+    thread::spawn(move || {
+        for line in BufReader::new(pipe).lines().map_while(Result::ok) {
+            let state = app.state::<ShellState>();
+            let mut inner = state.0.lock().unwrap();
+            inner.push_log(&line);
+        }
+    });
 }
 
 /* ── supervision ──────────────────────────────────────────────────────────── */
@@ -264,7 +272,7 @@ pub fn supervise(app: AppHandle) {
         //    spawn a second copy alongside it.
         let owns_live_child = {
             let state = app.state::<ShellState>();
-            let inner = state.0.lock().unwrap();
+            let mut inner = state.0.lock().unwrap();
             inner
                 .child
                 .as_mut()
@@ -381,7 +389,7 @@ fn run_attached(app: &AppHandle, endpoint: Endpoint) -> bool {
 
 /// The subset of GET /api/state the tray needs - same fields BridgeClient.cs reads.
 pub fn read_summary(agent: &ureq::Agent, endpoint: &Endpoint) -> Result<Summary, ureq::Error> {
-    let response = agent
+    let mut response = agent
         .get(&endpoint.state_url())
         .header("Authorization", &format!("Bearer {}", endpoint.token))
         .call()?;
@@ -491,17 +499,20 @@ pub fn quit(app: &AppHandle) {
 
 fn agent(app: &AppHandle) -> ureq::Agent {
     let state = app.state::<ShellState>();
-    state.0.lock().unwrap().agent.clone()
+    let inner = state.0.lock().unwrap();
+    inner.agent.clone()
 }
 
 fn is_quitting(app: &AppHandle) -> bool {
     let state = app.state::<ShellState>();
-    state.0.lock().unwrap().quitting
+    let inner = state.0.lock().unwrap();
+    inner.quitting
 }
 
 fn wants_retry(app: &AppHandle) -> bool {
     let state = app.state::<ShellState>();
-    state.0.lock().unwrap().retry
+    let inner = state.0.lock().unwrap();
+    inner.retry
 }
 
 pub fn clear_retry(app: &AppHandle) {
@@ -550,7 +561,8 @@ pub fn navigate(app: &AppHandle, url: &str) {
 pub fn navigate_home(app: &AppHandle) {
     let home = {
         let state = app.state::<ShellState>();
-        state.0.lock().unwrap().home_url.clone()
+        let inner = state.0.lock().unwrap();
+        inner.home_url.clone()
     };
     if let Some(home) = home {
         navigate(app, &home);

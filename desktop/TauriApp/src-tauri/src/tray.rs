@@ -77,7 +77,8 @@ pub fn show_main(app: &AppHandle) {
 fn open_logs(app: &AppHandle) {
     let dir = {
         let state = app.state::<ShellState>();
-        state.0.lock().unwrap().logs_dir.clone()
+        let inner = state.0.lock().unwrap();
+        inner.logs_dir.clone()
     };
     let Some(dir) = dir else { return };
     if dir.is_dir() {

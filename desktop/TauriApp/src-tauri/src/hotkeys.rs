@@ -1,4 +1,4 @@
-use tauri::{AppHandle, Manager};
+use tauri::AppHandle;
 
 use tauri_plugin_global_shortcut::{Code, GlobalShortcutExt, Modifiers, Shortcut, ShortcutState};
 
@@ -26,7 +26,7 @@ pub fn register(app: &AppHandle) -> tauri::Result<()> {
             tray::show_main(app);
         }
     });
-    if let Err(e) = app.handle().plugin(builder.build()) {
+    if let Err(e) = app.plugin(builder.build()) {
         eprintln!("global shortcut plugin failed to initialize: {e}");
     }
 

@@ -407,6 +407,41 @@ for (const field of ['clipping', 'silent', 'droppedMs']) {
   }
 }
 
+// Local monitoring must observe the encoder, never consume from it, and never be able to block the
+// outbound stream: the tee drops when the player falls behind rather than applying backpressure.
+const previewSource = await readFile(new URL('../src/audio/preview.ts', import.meta.url), 'utf8');
+if (
+  !previewSource.includes("stream.on('data', listener)") ||
+  !previewSource.includes('MAX_PENDING_BYTES') ||
+  !/child\.stdin\.write\(chunk, \(\) =>/.test(previewSource)
+) {
+  failed++;
+  process.stdout.write('  FAIL  local preview tees without backpressure\n');
+} else {
+  process.stdout.write('  ok    local preview tees without backpressure\n');
+}
+
+// Following a user may only ever move an existing stream. Joining a voice channel is not a request
+// to start broadcasting somebody's desktop.
+const indexSource = await readFile(new URL('../src/index.ts', import.meta.url), 'utf8');
+if (
+  !indexSource.includes('startFollowingOwner') ||
+  !/const session = getSession\(after\.guild\.id\);\s*\n\s*if \(!session/.test(indexSource)
+) {
+  failed++;
+  process.stdout.write('  FAIL  follow-user only retargets a live session\n');
+} else {
+  process.stdout.write('  ok    follow-user only retargets a live session\n');
+}
+
+// The wizard derives its step from server state, so it cannot claim a step is done when it is not.
+if (!webApp.includes('function wizardStep(') || !webPage.includes('id="wizard"')) {
+  failed++;
+  process.stdout.write('  FAIL  first-run wizard is state-derived\n');
+} else {
+  process.stdout.write('  ok    first-run wizard is state-derived\n');
+}
+
 // Source discovery should be push-driven; a spawn-per-tick poll is the thing being replaced.
 if (/setInterval\([\s\S]{0,200}loadSources\(\)[\s\S]{0,40}\}, 10_000\)/.test(webApp)) {
   failed++;

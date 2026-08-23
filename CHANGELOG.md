@@ -6,6 +6,27 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- **Local monitoring.** A Monitor button on each live session plays the encoded stream back on the
+  host, so what you hear has been through the gain stage, the limiter and a real Opus round trip.
+  The tee observes the encoder rather than consuming from it and drops rather than buffers when the
+  player falls behind, so monitoring can never stall the outbound stream. Needs `ffplay`, which
+  ships with a full ffmpeg build; `FFPLAY_PATH` overrides the location.
+- **Follow a user between voice channels** (`AUTO_FOLLOW_USER_ID`). Moves a stream that is already
+  running to whichever channel that user joins. It never starts one: joining a voice channel is not
+  a request to begin broadcasting somebody's desktop.
+- **First-run wizard.** A three-step guided setup — token, invite, capture helper — that derives its
+  current step from server state rather than remembering local progress, so it cannot claim a step
+  is finished when it is not. Dismissing it is remembered.
+
+### Fixed
+
+- Application icons now appear for sandboxed child processes. Browsers render audio from content
+  processes whose executable path cannot be read, so the picker previously showed one `firefox` row
+  with an icon beside identical rows without one.
+
+
 ## [1.3.1] - 2026-08-23
 
 ### Fixed

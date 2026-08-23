@@ -748,6 +748,20 @@ function buildCard(guildId) {
     }
   });
 
+  pick('.preview-btn').addEventListener('click', async (event) => {
+    const button = event.currentTarget;
+    const live = (ui.state?.sessions ?? []).find((item) => item.guildId === guildId);
+    button.disabled = true;
+    try {
+      await post('preview', { guildId, enabled: !live?.previewing });
+      toast(live?.previewing ? 'Monitoring stopped.' : 'Monitoring on this PC.', 'ok');
+    } catch (error) {
+      fail(error);
+    } finally {
+      button.disabled = false;
+    }
+  });
+
   pick('.loudness').addEventListener('change', async (event) => {
     try {
       await post('loudness', { guildId, mode: event.target.value });
@@ -867,6 +881,11 @@ function renderSession(session) {
 
   pick('.stat-bitrate').textContent = kbps(session.bitrate);
   pick('.stat-muted').textContent = session.muted ? 'muted' : 'live';
+  const preview = pick('.preview-btn');
+  preview.classList.toggle('primary', session.previewing);
+  preview.setAttribute('aria-pressed', String(session.previewing));
+  preview.textContent = session.previewing ? 'Monitoring' : 'Monitor';
+
   pick('.mute-btn').textContent = session.muted ? 'Unmute bot' : 'Mute bot';
   pick('.mute-btn').classList.toggle('danger', !session.muted);
   pick('.stat-ping').textContent = session.ping === null ? '—' : `${session.ping} ms`;
@@ -984,9 +1003,128 @@ function render(state) {
     if (state.inviteUrl) element.href = state.inviteUrl;
   }
 
+  renderWizard(state);
   renderOnboarding(state.bot);
   renderSessions(state.sessions);
   updateStartButton();
+}
+
+/* ── first-run wizard ─────────────────────────────────────────────────────── */
+
+/**
+ * The guided path for a fresh clone.
+ *
+ * A one-line banner is the right shape for a problem that appears later, and the wrong shape for
+ * someone who has four unrelated things left to do and no idea what order they go in. The step is
+ * derived from server state rather than remembered locally, so it cannot claim a step is done when
+ * it is not - and dismissing it is sticky, because being told how to set up software you already
+ * set up is worse than no help at all.
+ */
+const WIZARD_DISMISSED = 'bridge-wizard-dismissed';
+
+let wizardDismissed = (() => {
+  try {
+    return localStorage.getItem(WIZARD_DISMISSED) === '1';
+  } catch {
+    return false;
+  }
+})();
+
+function dismissWizard() {
+  wizardDismissed = true;
+  try {
+    localStorage.setItem(WIZARD_DISMISSED, '1');
+  } catch {
+    /* private mode; it simply reappears next launch */
+  }
+  $('wizard').hidden = true;
+}
+
+/** Which step still needs doing, or 0 when there is nothing left. */
+function wizardStep(state) {
+  if (!state.bot.hasToken) return 1;
+  if (!state.bot.ready) return 1;
+  if ((state.sessions.length === 0 && ui.guilds.length === 0) || state.bot.guildCount === 0) return 2;
+  if (state.capabilities.platform === 'win32' && !state.capabilities.audioTapBuilt) return 3;
+  return 0;
+}
+
+function renderWizard(state) {
+  const wizard = $('wizard');
+  const step = wizardStep(state);
+
+  // Never reopen once dismissed, and never open for an install that is already working.
+  if (wizardDismissed || (step === 0 && wizard.hidden)) {
+    wizard.hidden = true;
+    return;
+  }
+
+  wizard.hidden = false;
+  const pane = step === 0 ? 4 : step;
+
+  for (const section of wizard.querySelectorAll('.wizard-pane')) {
+    section.hidden = Number(section.dataset.pane) !== pane;
+  }
+  for (const item of wizard.querySelectorAll('.wizard-steps li')) {
+    const index = Number(item.dataset.step);
+    item.classList.toggle('done', step === 0 || index < step);
+    item.classList.toggle('current', index === step);
+  }
+
+  if (pane === 2) {
+    $('wizard-tag').textContent = state.bot.tag ?? 'the bot';
+    if (state.inviteUrl) $('wizard-invite').href = state.inviteUrl;
+  }
+  if (pane === 3 && state.capabilities.platform !== 'win32') {
+    $('wizard-capture-text').textContent =
+      'Per-application capture uses the PipeWire tools. Install pipewire-bin (Debian/Ubuntu) or pipewire-utils (Fedora) on this machine, then restart the bridge.';
+    $('wizard-build').hidden = true;
+  }
+}
+
+$('wizard-save').addEventListener('click', async () => {
+  const button = $('wizard-save');
+  const error = $('wizard-error');
+  const token = $('wizard-token').value.trim();
+  const appId = $('wizard-appid').value.trim();
+
+  error.hidden = true;
+  if (!token || !appId) {
+    error.hidden = false;
+    error.textContent = 'Both the bot token and the application ID are needed.';
+    return;
+  }
+
+  button.disabled = true;
+  button.textContent = 'Signing in…';
+  try {
+    await post('config', { DISCORD_TOKEN: token, DISCORD_APP_ID: appId });
+    $('wizard-token').value = '';
+    await post('signin');
+    configLoaded = false;
+    await Promise.all([refreshState(), loadGuilds(), loadSources()]);
+    toast('Signed in.', 'ok');
+  } catch (failure) {
+    error.hidden = false;
+    error.textContent = failure instanceof Error ? failure.message : String(failure);
+  } finally {
+    button.disabled = false;
+    button.textContent = 'Save and sign in';
+  }
+});
+
+$('wizard-build').addEventListener('click', async (event) => {
+  await runAction(event.target, 'setup/build-native', 'Build');
+  await refreshState().catch(() => undefined);
+});
+
+$('wizard-done').addEventListener('click', () => {
+  dismissWizard();
+  showTab('stream');
+});
+
+for (const id of ['wizard-skip', 'wizard-skip-2', 'wizard-skip-3']) {
+  $(id).addEventListener('click', dismissWizard);
 }
 
 /**

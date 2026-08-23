@@ -26,6 +26,7 @@ export const EDITABLE_KEYS = [
   'PRESENCE_NOW_PLAYING',
   'AUTO_LEAVE_SECONDS',
   'AUTO_RESUME',
+  'AUTO_FOLLOW_USER_ID',
   'FFMPEG_PATH',
   'AUDIOTAP_PATH',
   'LOG_LEVEL',
@@ -105,6 +106,7 @@ function validate(key: EditableKey, raw: string): string {
         throw new Error('DISCORD_TOKEN does not look like a Discord bot token.');
       }
       return value;
+    case 'AUTO_FOLLOW_USER_ID':
     case 'DISCORD_APP_ID':
     case 'DISCORD_GUILD_ID':
       if (!/^\d{15,22}$/.test(value)) throw new Error(`${key} must be a Discord numeric ID.`);
@@ -277,6 +279,7 @@ export const RESTART_REQUIRED_KEYS: readonly string[] = [
   'PRESENCE_NOW_PLAYING',
   'AUTO_LEAVE_SECONDS',
   'AUTO_RESUME',
+  'AUTO_FOLLOW_USER_ID',
   'FFMPEG_PATH',
   'AUDIOTAP_PATH',
   'LOG_LEVEL',

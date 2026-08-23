@@ -19,6 +19,7 @@ import { logger } from '../logger.ts';
 import { OpusEncoder, probeDshowFormat, type DshowFormat, type EncoderInput } from '../audio/encoder.ts';
 import { Mixer, type MixInputStats } from '../audio/mixer.ts';
 import { nowPlayingSummary, type NowPlaying } from '../audio/monitor.ts';
+import { Preview } from '../audio/preview.ts';
 import { resolveProcessByName, startCapture, type CaptureTap, type TapStats } from '../audio/tap.ts';
 import { IS_WINDOWS } from '../platform.ts';
 
@@ -67,6 +68,8 @@ export interface SessionStatus {
   listeners: number;
   /** Track metadata for whatever the host is playing, when it could be read. */
   nowPlaying: NowPlaying | null;
+  /** True while the encoded stream is also being played back on this machine. */
+  previewing: boolean;
 }
 
 /**
@@ -118,6 +121,7 @@ export class BridgeSession {
   #taps: CaptureTap[] = [];
   #mixer: Mixer | null = null;
   #encoder: OpusEncoder | null = null;
+  #preview: Preview | null = null;
   #captureFormat = 'starting';
   #qualityNote: string | null = null;
   #startedAt = Date.now();
@@ -429,7 +433,33 @@ export class BridgeSession {
       restarts: this.#restarts,
       listeners: this.listeners,
       nowPlaying: nowPlayingSummary(),
+      previewing: this.#preview?.running ?? false,
     };
+  }
+
+  /**
+   * Plays the encoded stream back on this machine.
+   *
+   * Deliberately tees the encoder rather than the source: the source is already audible, so the
+   * only useful monitor is one that has been through the gain stage, the limiter and a real Opus
+   * round trip. Survives a pipeline rebuild by re-attaching in #startAudio.
+   */
+  async setPreview(enabled: boolean): Promise<void> {
+    return this.#mutate(async () => {
+      if (!enabled) {
+        this.#preview?.close();
+        this.#preview = null;
+        log.info('local preview stopped', { guild: this.guildId });
+        return;
+      }
+
+      const encoder = this.#encoder;
+      if (!encoder) throw new Error('Nothing is encoding yet; try again once the stream is running.');
+
+      this.#preview ??= new Preview();
+      this.#preview.start(encoder.stream);
+      log.info('local preview started', { guild: this.guildId });
+    });
   }
 
   /** Humans in the channel, excluding the bot itself. Drives the leave-when-empty timer. */
@@ -446,6 +476,8 @@ export class BridgeSession {
     if (sessions.get(this.guildId) === this) sessions.delete(this.guildId);
     log.info('ending bridge session', { guild: this.guildId, channel: this.channelId });
 
+    this.#preview?.close();
+    this.#preview = null;
     this.#player.stop(true);
     await this.#stopAudio();
 
@@ -582,6 +614,8 @@ export class BridgeSession {
     });
 
     this.#player.play(resource);
+    // A rebuilt encoder is a new stream, so an active monitor has to follow it across.
+    if (this.#preview?.running) this.#preview.attach(encoder.stream);
     this.#startedAt = Date.now();
     if (this.#stableTimer) clearTimeout(this.#stableTimer);
     this.#stableTimer = setTimeout(() => {

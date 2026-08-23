@@ -49,6 +49,7 @@ client.once(Events.ClientReady, (ready) => {
 
   stopPresence = startPresence(client);
   startEmptyChannelWatch();
+  startFollowingOwner();
   if (config.automation.resumeLastRoute) void resumeLastRoute();
 });
 
@@ -121,6 +122,48 @@ function startEmptyChannelWatch(): void {
   }, 15_000);
   emptyWatch.unref();
   log.info(`will stop a stream after ${config.automation.leaveWhenEmptySeconds}s with no listeners`);
+}
+
+/**
+ * Moves a live stream to whichever channel the configured user walks into.
+ *
+ * Only ever *moves* an existing stream - it never starts one. Joining a voice channel is not a
+ * request to start broadcasting your desktop, and a bridge that appeared uninvited because someone
+ * hopped into a room would be alarming rather than convenient. Nothing happens unless the bridge is
+ * already streaming in that server, and leaving voice entirely is left alone so the empty-channel
+ * timer stays the single thing that decides when a stream ends.
+ */
+function startFollowingOwner(): void {
+  const owner = config.automation.followUserId;
+  if (!owner) return;
+
+  client.on(Events.VoiceStateUpdate, (before, after) => {
+    if (after.id !== owner) return;
+    const channel = after.channel;
+    if (!channel?.isVoiceBased() || channel.id === before.channelId) return;
+
+    const session = getSession(after.guild.id);
+    if (!session || session.channelId === channel.id) return;
+
+    const me = after.guild.members.me;
+    if (!me?.permissionsIn(channel).has([PermissionFlagsBits.Connect, PermissionFlagsBits.Speak])) {
+      log.info('not following: the bot cannot speak in that channel', { channel: channel.id });
+      return;
+    }
+
+    log.info('following the owner to another channel', {
+      guild: after.guild.id,
+      from: session.channelId,
+      to: channel.id,
+    });
+
+    const ceiling = Math.min(channel.bitrate, channel.guild.maximumBitrate);
+    void startOrRetarget(channel, session.sources, Math.min(session.bitrate, ceiling)).catch(
+      (error: unknown) => log.warn('could not follow the owner', error),
+    );
+  });
+
+  log.info('will follow one user between voice channels', { user: owner });
 }
 
 /** Picks up exactly where the last run left off, when the user asked for that. */

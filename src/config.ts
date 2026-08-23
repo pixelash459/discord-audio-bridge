@@ -118,6 +118,13 @@ function safePath(name: string, fallback: string): string {
   return value;
 }
 
+function snowflake(name: string): string | undefined {
+  const value = optional(name);
+  if (value === undefined) return undefined;
+  if (!/^\d{15,22}$/.test(value)) throw new Error(`${name} must be a Discord numeric ID, got "${value}"`);
+  return value;
+}
+
 function remoteHost(): string {
   const host = optional('REMOTE_HOST') ?? '127.0.0.1';
   const hostname = /^(?=.{1,253}$)(?!-)[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*$/;
@@ -231,6 +238,14 @@ export const config = {
     leaveWhenEmptySeconds: integer('AUTO_LEAVE_SECONDS', 0, 0, 86_400),
     /** Restore the last route on startup once the bot signs in. */
     resumeLastRoute: boolean('AUTO_RESUME', false),
+    /**
+     * Move a live stream to whichever voice channel this user joins.
+     *
+     * Deliberately one named user rather than "whoever asked": the bridge is streaming a specific
+     * machine's audio, so the person who owns that machine is the only one who should be able to
+     * pull it around a server by walking between channels.
+     */
+    followUserId: snowflake('AUTO_FOLLOW_USER_ID'),
   },
   control: {
     /** Loopback-only control panel. Set CONTROL_PORT=0 to disable it entirely. */
@@ -251,6 +266,8 @@ export const config = {
     /** PipeWire CLI tools used as the Linux capture helper. */
     pwRecord: safePath('PWRECORD_PATH', 'pw-record'),
     pwDump: safePath('PWDUMP_PATH', 'pw-dump'),
+    /** Player used for local monitoring. Ships with a full ffmpeg build. */
+    ffplay: safePath('FFPLAY_PATH', 'ffplay'),
     /** Persistent UTF-8 JSON-lines log. Set LOG_FILE=off to keep logs in memory/console only. */
     logFile: logFile(),
   },

@@ -156,6 +156,19 @@ export function collectChecks(): Check[] {
     );
   }
 
+  const ffplay = probe(config.paths.ffplay, ['-version']);
+  checks.push(
+    ffplay.ok
+      ? { id: 'ffplay', label: 'Local preview', status: 'ok', detail: ffplay.firstLine }
+      : {
+          id: 'ffplay',
+          label: 'Local preview',
+          status: 'warn',
+          detail: `ffplay not found at "${config.paths.ffplay}"`,
+          remedy: 'Optional. It ships with a full ffmpeg build and is only used to monitor a stream locally.',
+        },
+  );
+
   checks.push({
     id: 'log-file',
     label: 'Log file',

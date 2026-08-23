@@ -101,6 +101,7 @@ export interface Snapshot {
   automation: {
     leaveWhenEmptySeconds: number;
     resumeLastRoute: boolean;
+    followUserId: string | null;
   };
 }
 
@@ -164,6 +165,7 @@ export async function buildSnapshot(client: Client): Promise<Snapshot> {
     automation: {
       leaveWhenEmptySeconds: config.automation.leaveWhenEmptySeconds,
       resumeLastRoute: config.automation.resumeLastRoute,
+      followUserId: config.automation.followUserId ?? null,
     },
   };
 }
@@ -574,6 +576,21 @@ export async function handleApi(client: Client, req: IncomingMessage, url: URL):
       const { id } = await body<{ id: string }>(req);
       if (typeof id !== 'string') throw new ApiError(400, 'id is required.');
       return { deleted: deletePreset(id), presets: listPresets() };
+    }
+
+    case 'POST /api/preview': {
+      // Local monitoring. Nothing about it touches the outbound stream, so a failure here is
+      // reported as a plain error rather than being allowed to disturb a live session.
+      const { guildId, enabled } = await body<{ guildId: string; enabled: boolean }>(req);
+      const session = getSession(guildId);
+      if (!session) throw new ApiError(404, 'Nothing is streaming in that server.');
+      if (typeof enabled !== 'boolean') throw new ApiError(400, 'enabled must be true or false.');
+      try {
+        await session.setPreview(enabled);
+      } catch (error) {
+        throw new ApiError(409, error instanceof Error ? error.message : String(error));
+      }
+      return { session: session.status() };
     }
 
     case 'POST /api/loudness': {

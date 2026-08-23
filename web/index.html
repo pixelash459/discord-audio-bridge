@@ -22,6 +22,79 @@
       </div>
     </div>
 
+    <!--
+      First run. The banner below is right for a problem that appears later; it is the wrong shape
+      for someone who has just cloned the repository and has four unrelated things left to do.
+    -->
+    <div id="wizard" class="overlay" role="dialog" aria-modal="true" aria-labelledby="wizard-title" hidden>
+      <div class="overlay-card wizard-card">
+        <ol class="wizard-steps" aria-label="Setup progress">
+          <li data-step="1"><span class="wizard-dot">1</span> Token</li>
+          <li data-step="2"><span class="wizard-dot">2</span> Invite</li>
+          <li data-step="3"><span class="wizard-dot">3</span> Capture</li>
+        </ol>
+
+        <section class="wizard-pane" data-pane="1" hidden>
+          <h2 id="wizard-title-1">Give the bridge a bot</h2>
+          <p>
+            Create an application at
+            <a href="https://discord.com/developers/applications" target="_blank" rel="noreferrer">discord.com/developers/applications</a>,
+            open <strong>Bot</strong>, press <strong>Reset Token</strong>, and paste it here. It is written to
+            <code>.env</code> on this computer and never leaves it.
+          </p>
+          <label class="field">
+            <span class="label">Bot token</span>
+            <input id="wizard-token" type="password" autocomplete="new-password" placeholder="paste the bot token" />
+          </label>
+          <label class="field">
+            <span class="label">Application ID <span class="muted">(General Information)</span></span>
+            <input id="wizard-appid" type="text" inputmode="numeric" autocomplete="off" />
+          </label>
+          <p id="wizard-error" class="notice error" hidden></p>
+          <div class="wizard-actions">
+            <button id="wizard-skip" class="btn ghost" type="button">I'll do this later</button>
+            <button id="wizard-save" class="btn primary" type="button">Save and sign in</button>
+          </div>
+        </section>
+
+        <section class="wizard-pane" data-pane="2" hidden>
+          <h2 id="wizard-title-2">Invite it to a server</h2>
+          <p>
+            The bridge is signed in as <strong id="wizard-tag">the bot</strong> but is not in a server yet.
+            This link asks for exactly the permissions it uses — including
+            <strong>Set Voice Channel Status</strong>, which most older invite links leave out.
+          </p>
+          <div class="wizard-actions">
+            <button id="wizard-skip-2" class="btn ghost" type="button">Skip</button>
+            <a id="wizard-invite" class="btn primary" href="#" target="_blank" rel="noreferrer">Open the invite page</a>
+          </div>
+          <p class="muted small">This step completes on its own once the bot joins a server.</p>
+        </section>
+
+        <section class="wizard-pane" data-pane="3" hidden>
+          <h2 id="wizard-title-3">Build the capture helper</h2>
+          <p id="wizard-capture-text">
+            Per-application capture uses <code>AudioTap</code>, a small native helper. Building it needs the
+            .NET SDK and takes a few seconds. Without it you can still capture a virtual cable.
+          </p>
+          <div class="wizard-actions">
+            <button id="wizard-skip-3" class="btn ghost" type="button">Skip</button>
+            <button id="wizard-build" class="btn primary" type="button">Build AudioTap</button>
+          </div>
+        </section>
+
+        <section class="wizard-pane" data-pane="4" hidden>
+          <h2 id="wizard-title-4">Ready</h2>
+          <p>Pick a voice channel and an application, and press Start.</p>
+          <div class="wizard-actions">
+            <button id="wizard-done" class="btn primary" type="button">Start streaming</button>
+          </div>
+        </section>
+
+        <h2 id="wizard-title" class="visually-hidden">Set up Discord Audio Bridge</h2>
+      </div>
+    </div>
+
     <header class="topbar">
       <div class="brand">
         <span class="brand-mark">🎧</span>
@@ -242,6 +315,10 @@
               <input id="cfg-AUTO_LEAVE_SECONDS" type="number" min="0" max="86400" step="30" />
             </label>
             <label class="field">
+              <span class="label">Follow this user between channels <span class="muted">(their Discord ID)</span></span>
+              <input id="cfg-AUTO_FOLLOW_USER_ID" type="text" inputmode="numeric" autocomplete="off" placeholder="blank = off" />
+            </label>
+            <label class="field">
               <span class="label">Resume the last route on start</span>
               <select id="cfg-AUTO_RESUME">
                 <option value="false">no</option>
@@ -377,6 +454,7 @@
           </div>
           <div class="button-row">
             <span class="pill listeners" hidden></span>
+            <button class="btn ghost preview-btn" type="button" aria-pressed="false" title="Play the encoded stream on this PC">Monitor</button>
             <button class="btn ghost mute-btn" type="button">Mute bot</button>
             <button class="btn danger stop-btn" type="button">Stop</button>
           </div>

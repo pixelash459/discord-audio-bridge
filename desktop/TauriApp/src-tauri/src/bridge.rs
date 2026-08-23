@@ -18,6 +18,8 @@ const START_BUDGET: Duration = Duration::from_secs(30);
 const REATTACH_BUDGET: Duration = Duration::from_secs(15);
 /// How long the failure screen waits before trying again on its own.
 const FAILURE_BACKOFF: Duration = Duration::from_secs(5);
+/// Start attempts before the supervisor stops auto-retrying and waits for the user.
+const MAX_START_ATTEMPTS: u32 = 3;
 
 /* ── path discovery ───────────────────────────────────────────────────────── */
 
@@ -144,6 +146,7 @@ fn spawn_bridge(app: &AppHandle) -> Result<Child, String> {
                 "found the discord-audio-bridge checkout but no Node.js on PATH \
 (Node 22.18+ is required to run the bridge from source)",
             )?;
+            check_node_version(&node)?;
             return start_child(app, &node, &[root.join("src").join("index.ts")], &root);
         }
     }
@@ -176,6 +179,30 @@ fn spawn_bridge(app: &AppHandle) -> Result<Child, String> {
         "(or set BRIDGE_EXECUTABLE).",
     )
     .into())
+}
+
+/// The bridge runs TypeScript directly, which needs Node's native type stripping
+/// (22.18+). A pre-22 Node fails with a syntax error deep in the sources, so gate it
+/// here and say what to do instead.
+fn check_node_version(node: &Path) -> Result<(), String> {
+    let output = Command::new(node)
+        .arg("--version")
+        .output()
+        .map_err(|e| format!("could not run {} --version: {e}", node.display()))?;
+    let text = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    let mut parts = text
+        .trim_start_matches('v')
+        .split('.')
+        .map(|p| p.trim().parse::<u32>().unwrap_or(0));
+    let (major, minor) = (parts.next().unwrap_or(0), parts.next().unwrap_or(0));
+    if (major, minor) < (22, 18) {
+        return Err(format!(
+            "Node 22.18+ is required to run the bridge from source, found {text} at {} \
+(install Node 22+, or point BRIDGE_EXECUTABLE at a packaged bridge)",
+            node.display()
+        ));
+    }
+    Ok(())
 }
 
 /// Resolve Node from PATH, mirroring BotProcess.ResolveNode() in the main repository:
@@ -240,11 +267,22 @@ fn drain_pipe(app: &AppHandle, pipe: impl std::io::Read + Send + 'static) {
 
 /* ── supervision ──────────────────────────────────────────────────────────── */
 
+/// How the wait-for-panel loop can end.
+enum WaitOutcome {
+    Ready(Endpoint),
+    /// The deadline passed with no panel. Detail says what the bridge last said.
+    Timeout(String),
+    /// The bridge child exited before exposing a panel. Detail says how and why.
+    ChildDied(String),
+}
+
 /// One supervision thread lives for the whole app lifetime. It attaches to an already
 /// running bridge if there is one, starts a child only when nothing answers, and keeps
 /// the tray in step once attached. This is the WinForms shell's BotProcess lifecycle,
-/// restated for two platforms.
+/// restated for two platforms - plus a bounded start budget, because an unattended
+/// respawn loop against a broken Node would spin forever.
 pub fn supervise(app: AppHandle) {
+    let mut failed_starts: u32 = 0;
     loop {
         if is_quitting(&app) {
             return;
@@ -255,41 +293,79 @@ pub fn supervise(app: AppHandle) {
             if run_attached(&app, endpoint) {
                 return;
             }
+            failed_starts = 0;
             continue;
         }
 
         // 2. Nothing answered. If the bridge is merely restarting, give it a moment
         //    rather than spawning a duplicate on top of it.
         set_phase(&app, Phase::Locating, "looking for a running bridge");
-        if let Some(endpoint) = wait_for_endpoint(&app, REATTACH_BUDGET) {
-            if run_attached(&app, endpoint) {
-                return;
+        match wait_for_endpoint(&app, REATTACH_BUDGET) {
+            WaitOutcome::Ready(endpoint) => {
+                if run_attached(&app, endpoint) {
+                    return;
+                }
+                failed_starts = 0;
+                continue;
             }
-            continue;
+            WaitOutcome::ChildDied(detail) => {
+                set_phase(&app, Phase::Failed, &detail);
+                failed_starts += 1;
+            }
+            WaitOutcome::Timeout(_) => {}
         }
 
         // 3. Still nothing. If we already own a live child, it is still starting - never
         //    spawn a second copy alongside it.
-        let owns_live_child = {
-            let state = app.state::<ShellState>();
-            let mut inner = state.0.lock().unwrap();
-            inner
-                .child
-                .as_mut()
-                .is_some_and(|c| c.try_wait().is_ok_and(|s| s.is_none()))
-        };
-        if owns_live_child {
+        if owns_live_child(&app) {
             set_phase(&app, Phase::Starting, "waiting for the bridge control panel");
-            if let Some(endpoint) = wait_for_endpoint(&app, START_BUDGET) {
-                if run_attached(&app, endpoint) {
-                    return;
+            match wait_for_endpoint(&app, START_BUDGET) {
+                WaitOutcome::Ready(endpoint) => {
+                    if run_attached(&app, endpoint) {
+                        return;
+                    }
+                    failed_starts = 0;
+                    continue;
+                }
+                WaitOutcome::ChildDied(detail) => {
+                    set_phase(&app, Phase::Failed, &detail);
+                    failed_starts += 1;
+                }
+                WaitOutcome::Timeout(_) => {
+                    // Alive but panel-less past the whole budget: our own child is broken
+                    // (or configured without a panel). Stop it rather than orbiting it.
+                    kill_owned_child(&app);
+                    set_phase(
+                        &app,
+                        Phase::Failed,
+                        "the bridge is running but its control panel never answered - \
+is CONTROL_PORT disabled, or is the port already taken?",
+                    );
+                    failed_starts += 1;
                 }
             }
-            thread::sleep(POLL);
             continue;
         }
 
-        // 4. No bridge anywhere: start one.
+        // 4. No bridge anywhere: start one - unless earlier attempts already used the budget.
+        if failed_starts >= MAX_START_ATTEMPTS {
+            set_phase(
+                &app,
+                Phase::Failed,
+                "gave up starting the bridge after repeated failures - check the bridge output below, then Retry",
+            );
+            // Hold here until the user presses Retry (or quits); never auto-respawn.
+            while !is_quitting(&app) {
+                if wants_retry(&app) {
+                    clear_retry(&app);
+                    failed_starts = 0;
+                    break;
+                }
+                thread::sleep(Duration::from_millis(250));
+            }
+            continue;
+        }
+
         set_phase(&app, Phase::Starting, "starting the bridge");
         match spawn_bridge(&app) {
             Ok(child) => {
@@ -299,20 +375,31 @@ pub fn supervise(app: AppHandle) {
                     inner.logs.clear();
                     inner.child = Some(child);
                 }
-                if let Some(endpoint) = wait_for_endpoint(&app, START_BUDGET) {
-                    if run_attached(&app, endpoint) {
-                        return;
+                match wait_for_endpoint(&app, START_BUDGET) {
+                    WaitOutcome::Ready(endpoint) => {
+                        if run_attached(&app, endpoint) {
+                            return;
+                        }
+                        failed_starts = 0;
+                        continue;
                     }
-                    continue;
+                    WaitOutcome::ChildDied(detail) => {
+                        set_phase(&app, Phase::Failed, &detail);
+                        failed_starts += 1;
+                    }
+                    WaitOutcome::Timeout(_) => {
+                        set_phase(
+                            &app,
+                            Phase::Failed,
+                            "the bridge is running but its control panel never answered - is the port free, and is DISCORD_TOKEN set?",
+                        );
+                        failed_starts += 1;
+                    }
                 }
-                set_phase(
-                    &app,
-                    Phase::Failed,
-                    "the bridge started but never exposed its control panel (is DISCORD_TOKEN set?)",
-                );
             }
             Err(detail) => {
                 set_phase(&app, Phase::Failed, &detail);
+                failed_starts += 1;
             }
         }
 
@@ -324,6 +411,7 @@ pub fn supervise(app: AppHandle) {
             }
             if wants_retry(&app) {
                 clear_retry(&app);
+                failed_starts = 0;
                 break;
             }
             thread::sleep(Duration::from_millis(250));
@@ -331,19 +419,73 @@ pub fn supervise(app: AppHandle) {
     }
 }
 
-/// Poll the saved endpoint until the bridge answers, or the deadline passes.
-fn wait_for_endpoint(app: &AppHandle, budget: Duration) -> Option<Endpoint> {
+/// Stop and reap the bridge child this shell owns, if any. Never touches a bridge
+/// started by anyone else.
+fn kill_owned_child(app: &AppHandle) {
+    let state = app.state::<ShellState>();
+    let mut inner = state.0.lock().unwrap();
+    if let Some(mut child) = inner.child.take() {
+        let _ = child.kill();
+        let _ = child.wait();
+    }
+}
+
+/// Whether the bridge child we spawned is still alive, reaped if it has exited.
+fn owns_live_child(app: &AppHandle) -> bool {
+    let state = app.state::<ShellState>();
+    let mut inner = state.0.lock().unwrap();
+    inner
+        .child
+        .as_mut()
+        .is_some_and(|c| c.try_wait().is_ok_and(|s| s.is_none()))
+}
+
+/// Poll the saved endpoint until the bridge answers, the deadline passes, or - when the
+/// shell owns the child - the bridge dies first. Distinguishing those last two is what
+/// makes the failure screen honest: a timeout means "slow", a death means "broken", and
+/// the bridge's own last words are the best diagnostic either way.
+fn wait_for_endpoint(app: &AppHandle, budget: Duration) -> WaitOutcome {
     let deadline = Instant::now() + budget;
-    while Instant::now() < deadline {
+    loop {
         if is_quitting(app) {
-            return None;
+            return WaitOutcome::Timeout("app is quitting".into());
         }
         if let Some(endpoint) = probe_saved_endpoint(&agent(app)) {
-            return Some(endpoint);
+            return WaitOutcome::Ready(endpoint);
+        }
+
+        let exited = {
+            let state = app.state::<ShellState>();
+            let mut inner = state.0.lock().unwrap();
+            inner.child.as_mut().and_then(|c| c.try_wait().ok().flatten())
+        };
+        if let Some(status) = exited {
+            let mut detail = format!("the bridge exited during startup ({status})");
+            if let Some(last) = last_log_line(app) {
+                detail.push_str(": ");
+                detail.push_str(&last);
+            }
+            return WaitOutcome::ChildDied(detail);
+        }
+
+        if Instant::now() >= deadline {
+            return WaitOutcome::Timeout("no control panel within the budget".into());
         }
         thread::sleep(Duration::from_millis(500));
     }
-    None
+}
+
+/// The last non-empty line the bridge printed, for failure details.
+fn last_log_line(app: &AppHandle) -> Option<String> {
+    let state = app.state::<ShellState>();
+    let inner = state.0.lock().unwrap();
+    inner
+        .logs
+        .lines()
+        .rev()
+        .map(str::trim)
+        .find(|l| !l.is_empty())
+        .map(|l| l.chars().take(200).collect())
 }
 
 /// Returns true when the app is quitting (caller should stop), false when the bridge went away.

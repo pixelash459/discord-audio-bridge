@@ -27,6 +27,7 @@ import {
   type SourceSpec,
 } from '../voice/session.ts';
 import { readConfig, writeConfig, RESTART_REQUIRED_KEYS, type EditableKey } from './envFile.ts';
+import { refreshPresence } from '../presence.ts';
 import { authStatus, signIn } from '../signin.ts';
 import { versionInfo, type VersionInfo } from '../version.ts';
 import { remoteAccessInfo } from '../remote/server.ts';
@@ -37,6 +38,12 @@ import {
   OPUS_MIN_BITRATE,
   validateSources,
 } from '../validation.ts';
+
+const PRESENCE_KEYS = new Set([
+  'PRESENCE_ACTIVITY',
+  'PRESENCE_CHANNEL_STATUS',
+  'PRESENCE_NOW_PLAYING',
+]);
 
 const log = logger('api');
 
@@ -108,6 +115,12 @@ export interface Snapshot {
     resumeLastRoute: boolean;
     followUserId: string | null;
   };
+  /** Live Discord presence surfaces; toggles apply without restarting the bot. */
+  presence: {
+    activity: boolean;
+    channelStatus: boolean;
+    nowPlaying: boolean;
+  };
 }
 
 /**
@@ -172,6 +185,11 @@ export async function buildSnapshot(client: Client): Promise<Snapshot> {
       leaveWhenEmptySeconds: config.automation.leaveWhenEmptySeconds,
       resumeLastRoute: config.automation.resumeLastRoute,
       followUserId: config.automation.followUserId ?? null,
+    },
+    presence: {
+      activity: config.presence.activity,
+      channelStatus: config.presence.channelStatus,
+      nowPlaying: config.presence.nowPlaying,
     },
   };
 }
@@ -643,6 +661,9 @@ export async function handleApi(client: Client, req: IncomingMessage, url: URL):
         throw new ApiError(400, error instanceof Error ? error.message : String(error));
       }
       log.info(`configuration updated: ${Object.keys(updates).join(', ')}`);
+      if (Object.keys(updates).some((key) => PRESENCE_KEYS.has(key))) {
+        void refreshPresence(client).catch(() => undefined);
+      }
       return {
         ...readConfig(),
         restartRequired: Object.keys(updates).filter((key) => RESTART_REQUIRED_KEYS.includes(key)),

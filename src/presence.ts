@@ -19,13 +19,12 @@ let timer: NodeJS.Timeout | undefined;
 /**
  * What the bot should look like from inside Discord.
  *
- * Two surfaces, both cheap and both currently unused by this project: the bot's own activity
- * ("Listening to ..."), and the voice channel's status line, which Discord shows next to the
- * channel name for everyone in the server. Between them, nobody has to open the control panel or
- * run a slash command to find out what is playing.
+ * Two surfaces, both cheap: the bot's own activity ("Listening to ..."), and the voice channel's
+ * status line, which Discord shows next to the channel name for everyone in the server. Between
+ * them, nobody has to open the control panel or run a slash command to find out what is playing.
  *
  * Both are driven from the same string, which prefers the actual track over the application name
- * whenever the host could tell us one.
+ * whenever the host could tell us one. Each surface is independently toggleable from the panel.
  */
 function describeSession(): string | null {
   const sessions = allSessions();
@@ -40,7 +39,7 @@ function describeSession(): string | null {
 }
 
 async function applyActivity(client: Client, description: string | null): Promise<void> {
-  if (!config.presence.activity || !client.isReady()) return;
+  if (!client.isReady()) return;
 
   const wanted = description ?? '';
   if (wanted === lastActivity) return;
@@ -68,7 +67,7 @@ async function applyActivity(client: Client, description: string | null): Promis
  * on every poll would just fill the log.
  */
 async function applyChannelStatus(client: Client, channelId: string, status: string): Promise<void> {
-  if (!config.presence.channelStatus || statusDenied.has(channelId)) return;
+  if (statusDenied.has(channelId)) return;
   const text = status.slice(0, MAX_STATUS);
   if (lastStatusByChannel.get(channelId) === text) return;
   lastStatusByChannel.set(channelId, text);
@@ -91,10 +90,22 @@ async function applyChannelStatus(client: Client, channelId: string, status: str
   }
 }
 
+async function wipeChannelStatus(client: Client, channelId: string): Promise<void> {
+  if (statusDenied.has(channelId)) return;
+  if (lastStatusByChannel.get(channelId) === '') return;
+  lastStatusByChannel.set(channelId, '');
+  try {
+    await client.rest.put(`/channels/${channelId}/voice-status`, { body: { status: '' } });
+  } catch (error) {
+    lastStatusByChannel.delete(channelId);
+    log.debug('could not clear the voice channel status', error);
+  }
+}
+
 /** Clears a channel's status when the bot leaves, so it does not linger after the music stops. */
 export async function clearChannelStatus(client: Client, channelId: string): Promise<void> {
-  if (!config.presence.channelStatus || statusDenied.has(channelId)) return;
   lastStatusByChannel.delete(channelId);
+  if (statusDenied.has(channelId)) return;
   try {
     await client.rest.put(`/channels/${channelId}/voice-status`, { body: { status: '' } });
   } catch (error) {
@@ -105,14 +116,25 @@ export async function clearChannelStatus(client: Client, channelId: string): Pro
 /** Pushes the current state to Discord immediately, outside the poll cadence. */
 export async function refreshPresence(client: Client): Promise<void> {
   const description = describeSession();
-  await applyActivity(client, description);
+  await applyActivity(client, config.presence.activity ? description : null);
 
-  if (!description) return;
   const sessions = allSessions();
   await Promise.allSettled(
-    sessions.map((session) =>
-      applyChannelStatus(client, session.channelId, `🎧 ${describeTrack(nowPlaying()) ?? session.label}`),
-    ),
+    sessions.map(async (session) => {
+      if (!config.presence.channelStatus) {
+        await wipeChannelStatus(client, session.channelId);
+        return;
+      }
+      if (!description) {
+        await wipeChannelStatus(client, session.channelId);
+        return;
+      }
+      await applyChannelStatus(
+        client,
+        session.channelId,
+        `🎧 ${describeTrack(nowPlaying()) ?? session.label}`,
+      );
+    }),
   );
 }
 
@@ -120,13 +142,16 @@ export async function refreshPresence(client: Client): Promise<void> {
  * Polls rather than reacting to every state change, because both endpoints are rate limited and a
  * track can change several times a second while someone scrubs. Five seconds is well inside what a
  * person reads as "live" and well outside what Discord objects to.
+ *
+ * The timer always runs so Setup / Stream toggles take effect without restarting the bot; each
+ * apply path no-ops when its flag is off.
  */
 export function startPresence(client: Client): () => void {
   if (timer) return () => undefined;
-  if (!config.presence.activity && !config.presence.channelStatus) return () => undefined;
 
   timer = setInterval(() => void refreshPresence(client).catch(() => undefined), 5_000);
   timer.unref();
+  void refreshPresence(client).catch(() => undefined);
   return () => {
     if (timer) clearInterval(timer);
     timer = undefined;

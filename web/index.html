@@ -145,6 +145,18 @@
           <p>Your selection stays local until you press Start. Press <kbd>M</kbd> to mute, <kbd>S</kbd> to stop, <kbd>/</kbd> to search sources.</p>
         </div>
 
+        <div class="presence-bar" role="group" aria-label="Show what is playing on Discord">
+          <span class="presence-bar-label">Show on Discord</span>
+          <label class="checkbox">
+            <input id="presence-activity" type="checkbox" />
+            <span>Under the bot</span>
+          </label>
+          <label class="checkbox">
+            <input id="presence-channel" type="checkbox" />
+            <span>On the voice channel</span>
+          </label>
+        </div>
+
         <!-- One card per live session. The bot can stream to several servers at once. -->
         <div id="sessions" class="sessions"></div>
 
@@ -292,25 +304,26 @@
 
           <article class="card">
             <header class="card-head"><h2>Presence &amp; automation</h2></header>
+            <p class="muted small">These apply immediately — no bot restart. The same toggles are on the Stream tab.</p>
             <label class="field">
-              <span class="label">Bot activity</span>
+              <span class="label">Under the bot <span class="muted">(“Listening to …”)</span></span>
               <select id="cfg-PRESENCE_ACTIVITY">
-                <option value="true">show “Listening to …”</option>
+                <option value="true">show source / track under the bot</option>
                 <option value="false">off</option>
               </select>
             </label>
             <label class="field">
-              <span class="label">Voice channel status</span>
+              <span class="label">On the voice channel <span class="muted">(status line)</span></span>
               <select id="cfg-PRESENCE_CHANNEL_STATUS">
-                <option value="true">show the track on the channel</option>
+                <option value="true">show source / track on the channel</option>
                 <option value="false">off</option>
               </select>
             </label>
             <label class="field">
-              <span class="label">Read the host's now-playing track</span>
+              <span class="label">Prefer the host's now-playing track</span>
               <select id="cfg-PRESENCE_NOW_PLAYING">
-                <option value="true">yes — use Windows media info</option>
-                <option value="false">no</option>
+                <option value="true">yes — Windows media session when available</option>
+                <option value="false">no — use the capture source name only</option>
               </select>
             </label>
             <label class="field">

@@ -229,6 +229,25 @@ main {
 .page-intro h2 { font-size: clamp(21px, 3vw, 28px); }
 .page-intro > p { max-width: 52ch; margin: 0; color: var(--text-dim); }
 
+.presence-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px 20px;
+  margin: 0 0 16px;
+  padding: 10px 14px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--panel) 88%, transparent);
+}
+.presence-bar-label {
+  font-size: 12px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+  margin-right: 4px;
+}
+
 .panel {
   display: none;
 }

@@ -274,9 +274,7 @@ export const RESTART_REQUIRED_KEYS: readonly string[] = [
   // session can be switched from the panel or /loudness without restarting anything.
   'AUDIO_TARGET_LUFS',
   'AUDIO_TRUE_PEAK_DB',
-  'PRESENCE_ACTIVITY',
-  'PRESENCE_CHANNEL_STATUS',
-  'PRESENCE_NOW_PLAYING',
+  // PRESENCE_* are live getters — toggles apply on the next presence poll without a restart.
   'AUTO_LEAVE_SECONDS',
   'AUTO_RESUME',
   'AUTO_FOLLOW_USER_ID',

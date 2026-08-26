@@ -1010,6 +1010,57 @@ function renderSessions(sessions) {
 
 /* ── render ───────────────────────────────────────────────────────────────── */
 
+function syncPresenceToggles(presence) {
+  if (!presence) return;
+  const activity = $('presence-activity');
+  const channel = $('presence-channel');
+  // Avoid fighting the user while they click; only push when values differ.
+  if (activity && !activity.matches(':focus') && activity.checked !== presence.activity) {
+    activity.checked = presence.activity;
+  }
+  if (channel && !channel.matches(':focus') && channel.checked !== presence.channelStatus) {
+    channel.checked = presence.channelStatus;
+  }
+  const cfgActivity = $('cfg-PRESENCE_ACTIVITY');
+  const cfgChannel = $('cfg-PRESENCE_CHANNEL_STATUS');
+  if (cfgActivity && document.activeElement !== cfgActivity) {
+    cfgActivity.value = presence.activity ? 'true' : 'false';
+  }
+  if (cfgChannel && document.activeElement !== cfgChannel) {
+    cfgChannel.value = presence.channelStatus ? 'true' : 'false';
+  }
+}
+
+async function setPresenceFlag(key, enabled) {
+  try {
+    await post('config', { [key]: enabled ? 'true' : 'false' });
+    if (ui.state?.presence) {
+      if (key === 'PRESENCE_ACTIVITY') ui.state.presence.activity = enabled;
+      if (key === 'PRESENCE_CHANNEL_STATUS') ui.state.presence.channelStatus = enabled;
+    }
+    toast(
+      key === 'PRESENCE_ACTIVITY'
+        ? enabled
+          ? 'Showing under the bot.'
+          : 'Hidden under the bot.'
+        : enabled
+          ? 'Showing on the voice channel.'
+          : 'Hidden on the voice channel.',
+      'ok',
+    );
+  } catch (error) {
+    fail(error);
+    syncPresenceToggles(ui.state?.presence);
+  }
+}
+
+$('presence-activity').addEventListener('change', (event) => {
+  void setPresenceFlag('PRESENCE_ACTIVITY', event.target.checked);
+});
+$('presence-channel').addEventListener('change', (event) => {
+  void setPresenceFlag('PRESENCE_CHANNEL_STATUS', event.target.checked);
+});
+
 function render(state) {
   const becameReady = !ui.state?.bot.ready && state.bot.ready;
   ui.state = state;
@@ -1029,6 +1080,8 @@ function render(state) {
   $('bot-dot').className = `dot ${state.bot.ready ? 'on' : 'warn'}`;
   $('bot-state').textContent = state.bot.ready ? 'online' : 'connecting';
   $('bot-identity').textContent = state.bot.tag ?? 'not signed in';
+
+  syncPresenceToggles(state.presence);
 
   const ping = $('bot-ping');
   ping.hidden = state.bot.wsPing === null;

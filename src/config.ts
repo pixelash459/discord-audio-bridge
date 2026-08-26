@@ -228,14 +228,20 @@ export const config = {
   },
   presence: {
     /** Set the bot's "Listening to ..." activity from the live source or track. */
-    activity: boolean('PRESENCE_ACTIVITY', true),
+    get activity() {
+      return boolean('PRESENCE_ACTIVITY', true);
+    },
     /**
      * Write the live source into the voice channel's status line. Needs the Set Voice Channel
      * Status permission, which is not in most default invite URLs - the panel builds a correct one.
      */
-    channelStatus: boolean('PRESENCE_CHANNEL_STATUS', true),
+    get channelStatus() {
+      return boolean('PRESENCE_CHANNEL_STATUS', true);
+    },
     /** Poll the Windows media session for track metadata (AudioTap --now-playing). */
-    nowPlaying: boolean('PRESENCE_NOW_PLAYING', true),
+    get nowPlaying() {
+      return boolean('PRESENCE_NOW_PLAYING', true);
+    },
   },
   automation: {
     /** Stop and disconnect after this many seconds alone in a channel. 0 disables. */

@@ -7,7 +7,7 @@ things live.
 ## Getting set up
 
 ```powershell
-git clone https://github.com/AshutoshChaudhary-lgtm/discord-audio-bridge
+git clone https://github.com/pixelash459/discord-audio-bridge
 cd discord-audio-bridge
 npm run setup      # installs dependencies, builds AudioTap and the desktop shell, creates .env
 ```

@@ -27,7 +27,7 @@ whenever someone is representing the project publicly.
 ## Enforcement
 
 Report problems to the maintainers through
-[GitHub Security Advisories](https://github.com/AshutoshChaudhary-lgtm/discord-audio-bridge/security/advisories/new)
+[GitHub Security Advisories](https://github.com/pixelash459/discord-audio-bridge/security/advisories/new)
 or another private maintainer contact. Reports are handled confidentially.
 
 Maintainers may edit or remove contributions that violate this document, and may temporarily or

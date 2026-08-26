@@ -4,7 +4,7 @@ version = "1.5.0"
 description = "Desktop shell for discord-audio-bridge: native window, tray, and hotkeys around the bridge control panel"
 authors = ["discord-audio-bridge contributors"]
 license = "MIT"
-repository = "https://github.com/AshutoshChaudhary-lgtm/discord-audio-bridge"
+repository = "https://github.com/pixelash459/discord-audio-bridge"
 edition = "2021"
 rust-version = "1.77.2"
 

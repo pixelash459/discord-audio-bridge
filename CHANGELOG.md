@@ -312,15 +312,15 @@ First release.
 - ffmpeg's Ogg muxer defaults to one-second pages, which starves the Discord player. This project
   sets `-page_duration 20000`; measured, that is 163 ms to first packet versus 3186 ms.
 
-[Unreleased]: https://github.com/AshutoshChaudhary-lgtm/discord-audio-bridge/compare/v1.5.0...HEAD
-[1.5.0]: https://github.com/AshutoshChaudhary-lgtm/discord-audio-bridge/compare/v1.4.1...v1.5.0
-[1.4.1]: https://github.com/AshutoshChaudhary-lgtm/discord-audio-bridge/compare/v1.4.0...v1.4.1
-[1.4.0]: https://github.com/AshutoshChaudhary-lgtm/discord-audio-bridge/compare/v1.3.1...v1.4.0
-[1.3.1]: https://github.com/AshutoshChaudhary-lgtm/discord-audio-bridge/compare/v1.3.0...v1.3.1
-[1.3.0]: https://github.com/AshutoshChaudhary-lgtm/discord-audio-bridge/compare/v1.2.1...v1.3.0
-[1.2.1]: https://github.com/AshutoshChaudhary-lgtm/discord-audio-bridge/compare/v1.2.0...v1.2.1
-[1.2.0]: https://github.com/AshutoshChaudhary-lgtm/discord-audio-bridge/compare/v1.1.3...v1.2.0
-[1.1.3]: https://github.com/AshutoshChaudhary-lgtm/discord-audio-bridge/compare/v1.1.2...v1.1.3
-[1.1.2]: https://github.com/AshutoshChaudhary-lgtm/discord-audio-bridge/compare/v1.1.1...v1.1.2
-[1.1.1]: https://github.com/AshutoshChaudhary-lgtm/discord-audio-bridge/compare/v1.1.0...v1.1.1
-[1.1.0]: https://github.com/AshutoshChaudhary-lgtm/discord-audio-bridge/releases/tag/v1.1.0
+[Unreleased]: https://github.com/pixelash459/discord-audio-bridge/compare/v1.5.0...HEAD
+[1.5.0]: https://github.com/pixelash459/discord-audio-bridge/compare/v1.4.1...v1.5.0
+[1.4.1]: https://github.com/pixelash459/discord-audio-bridge/compare/v1.4.0...v1.4.1
+[1.4.0]: https://github.com/pixelash459/discord-audio-bridge/compare/v1.3.1...v1.4.0
+[1.3.1]: https://github.com/pixelash459/discord-audio-bridge/compare/v1.3.0...v1.3.1
+[1.3.0]: https://github.com/pixelash459/discord-audio-bridge/compare/v1.2.1...v1.3.0
+[1.2.1]: https://github.com/pixelash459/discord-audio-bridge/compare/v1.2.0...v1.2.1
+[1.2.0]: https://github.com/pixelash459/discord-audio-bridge/compare/v1.1.3...v1.2.0
+[1.1.3]: https://github.com/pixelash459/discord-audio-bridge/compare/v1.1.2...v1.1.3
+[1.1.2]: https://github.com/pixelash459/discord-audio-bridge/compare/v1.1.1...v1.1.2
+[1.1.1]: https://github.com/pixelash459/discord-audio-bridge/compare/v1.1.0...v1.1.1
+[1.1.0]: https://github.com/pixelash459/discord-audio-bridge/releases/tag/v1.1.0

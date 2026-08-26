@@ -3,7 +3,7 @@
 ## Reporting a vulnerability
 
 Please report security issues privately through
-[GitHub Security Advisories](https://github.com/AshutoshChaudhary-lgtm/discord-audio-bridge/security/advisories/new)
+[GitHub Security Advisories](https://github.com/pixelash459/discord-audio-bridge/security/advisories/new)
 rather than opening a public issue.
 
 Expect an initial response within a week.

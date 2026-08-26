@@ -233,7 +233,11 @@ export const config = {
     get channelStatus() {
       return boolean('PRESENCE_CHANNEL_STATUS', true);
     },
-    /** Poll the Windows media session for track metadata (AudioTap --now-playing). */
+    /**
+     * Let the host's current track stand in for the application name in presence and status text.
+     * AudioTap reports the Windows media session either way; this decides only whether that track
+     * is used, so turning it off saves no work - it just keeps the application name on show.
+     */
     get nowPlaying() {
       return boolean('PRESENCE_NOW_PLAYING', true);
     },

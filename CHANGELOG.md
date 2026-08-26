@@ -6,6 +6,16 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Fixed
+
+- **A rejected presence toggle left the switch showing the wrong state.** The poll that syncs the
+  Stream tab switches skips any control the pointer is on, so it does not fight a click in
+  progress - but a checkbox keeps focus after being clicked, so the revert on a failed write was
+  skipped too. The panel showed the toggle flipped while the server still had it the other way.
+- **Leaving a voice channel spent a request clearing a status that was never set.** The status is
+  now cleared only when this process actually wrote one, which also keeps the cleanup working for
+  someone who turns the toggle off while a status is still live.
+
 ## [1.5.0] - 2026-08-26
 
 ### Changed

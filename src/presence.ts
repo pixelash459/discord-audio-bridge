@@ -102,9 +102,18 @@ async function wipeChannelStatus(client: Client, channelId: string): Promise<voi
   }
 }
 
-/** Clears a channel's status when the bot leaves, so it does not linger after the music stops. */
+/**
+ * Clears a channel's status when the bot leaves, so it does not linger after the music stops.
+ *
+ * Only a status this process actually wrote is worth a request. Deciding from the current flag
+ * instead would get both ends wrong: it would skip the cleanup for someone who turned the toggle
+ * off while a status was still live, and spend a request on every leave for someone who never
+ * turned it on and never had a status to clear.
+ */
 export async function clearChannelStatus(client: Client, channelId: string): Promise<void> {
+  const written = lastStatusByChannel.get(channelId);
   lastStatusByChannel.delete(channelId);
+  if (written === undefined || written === '') return;
   if (statusDenied.has(channelId)) return;
   try {
     await client.rest.put(`/channels/${channelId}/voice-status`, { body: { status: '' } });

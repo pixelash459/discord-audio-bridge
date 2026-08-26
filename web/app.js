@@ -1006,23 +1006,32 @@ function renderSessions(sessions) {
 
 /* ── render ───────────────────────────────────────────────────────────────── */
 
-function syncPresenceToggles(presence) {
+/**
+ * Pushes server-side presence flags back onto both copies of the controls: the Stream page
+ * switches and the Setup page selects.
+ *
+ * A poll must not fight someone mid-click, so a focused control is normally left alone. That
+ * guard has to be skipped when a write fails: a checkbox keeps focus after being clicked, so
+ * honouring it there would leave the switch showing a state the server just rejected.
+ */
+function syncPresenceToggles(presence, force = false) {
   if (!presence) return;
+  const settled = (element) => force || !element.matches(':focus');
+
   const activity = $('presence-activity');
   const channel = $('presence-channel');
-  // Avoid fighting the user while they click; only push when values differ.
-  if (activity && !activity.matches(':focus') && activity.checked !== presence.activity) {
+  if (activity && settled(activity) && activity.checked !== presence.activity) {
     activity.checked = presence.activity;
   }
-  if (channel && !channel.matches(':focus') && channel.checked !== presence.channelStatus) {
+  if (channel && settled(channel) && channel.checked !== presence.channelStatus) {
     channel.checked = presence.channelStatus;
   }
   const cfgActivity = $('cfg-PRESENCE_ACTIVITY');
   const cfgChannel = $('cfg-PRESENCE_CHANNEL_STATUS');
-  if (cfgActivity && document.activeElement !== cfgActivity) {
+  if (cfgActivity && settled(cfgActivity)) {
     cfgActivity.value = presence.activity ? 'true' : 'false';
   }
-  if (cfgChannel && document.activeElement !== cfgChannel) {
+  if (cfgChannel && settled(cfgChannel)) {
     cfgChannel.value = presence.channelStatus ? 'true' : 'false';
   }
 }
@@ -1046,14 +1055,15 @@ async function setPresenceFlag(key, enabled) {
     );
   } catch (error) {
     fail(error);
-    syncPresenceToggles(ui.state?.presence);
+    // The write never landed, so put the switch back where the server still has it.
+    syncPresenceToggles(ui.state?.presence, true);
   }
 }
 
-$('presence-activity').addEventListener('change', (event) => {
+$('presence-activity')?.addEventListener('change', (event) => {
   void setPresenceFlag('PRESENCE_ACTIVITY', event.target.checked);
 });
-$('presence-channel').addEventListener('change', (event) => {
+$('presence-channel')?.addEventListener('change', (event) => {
   void setPresenceFlag('PRESENCE_CHANNEL_STATUS', event.target.checked);
 });
 

@@ -72,7 +72,7 @@ pub fn run() {
             shell_hello,
             shell_open_panel,
             shell_save_setup
-        ]
+        ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
         .run(|app, event| {

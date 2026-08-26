@@ -45,6 +45,7 @@ phone or another device on the LAN or a personal Tailscale network.
 - [Getting the most out of it](#getting-the-most-out-of-it)
 - [Why a virtual cable sounds flat](#why-a-virtual-cable-sounds-flat--and-why-this-doesnt)
 - [Configuration](#configuration)
+- [Settings reference](#settings-reference)
 - [How it is put together](#how-it-is-put-together)
 - [Troubleshooting](#troubleshooting)
 - [Contributing](#contributing)
@@ -337,10 +338,11 @@ resampling if rates disagree, and any strip EQ, gate, or compressor left enabled
 
 ## Configuration
 
-The Discord token and application ID are required before the bot can sign in. The Setup tab manages
-the common credentials, audio defaults, paths, logging, control ports, and Tailscale trust setting;
-advanced keys such as `REMOTE_TOKEN` and `CONTROL_OPEN` can be set
-directly in the environment file. See [`.env.example`](.env.example).
+The bot token is the only credential required before the bot can sign in; the application id is
+resolved from it. The Setup tab manages the common credentials, audio defaults, paths, logging,
+control ports, and the Tailscale trust setting; advanced keys such as `REMOTE_TOKEN` and
+`CONTROL_OPEN` can be set directly in the environment file. See [`.env.example`](.env.example),
+and [Settings reference](#settings-reference) for what each one does.
 
 Precedence is: real process environment, writable runtime `.env`, then checkout `.env`. A development
 checkout normally uses its own directory as the runtime root, so it has only one `.env`.
@@ -374,6 +376,110 @@ checkout normally uses its own directory as the runtime root, so it has only one
 | `FFPLAY_PATH` | `ffplay` | Player for the Monitor button. Ships with a full ffmpeg build. |
 | `LOG_LEVEL` | `info` | `debug` prints the exact ffmpeg command line and every tap event. |
 | `LOG_FILE` | `logs/bridge.log` | Asynchronous JSON-lines log inside the runtime root; `off` disables it. Rotates continuously at 10 MiB. |
+
+## Settings reference
+
+The table above is the lookup; this is what each control actually does, grouped by where you find
+it. Settings marked **restart** only take effect the next time the bot starts — the panel says so
+when you save one. Everything else applies immediately.
+
+### Stream tab: live controls
+
+These act on a running stream at once and are not written to `.env`.
+
+| Control | What it does |
+| --- | --- |
+| **Server** / **Voice channel** | Where the audio goes. The channel list shows each room's bitrate, because that is the single biggest lever on quality. |
+| **App / Device / Cable** | How to capture. *App* taps one program's audio directly. *Device* captures an output device's mix. *Cable* reads a DirectShow input such as a virtual cable. |
+| **Refresh sources** | Re-enumerates apps and devices. Sources are pushed live, so this is only needed if something was launched while the list was hidden. |
+| **Gain** | −60 to +20 dB. Applied inside the capture helper before any format conversion, so it is free and lossless; only *Cable* sources need an encoder restart to change it. |
+| **Opus bitrate** | Re-encodes the live stream. The slider's maximum is the channel's own ceiling, so you cannot exceed what the voice room allows. |
+| **Loudness** | Per-stream override of the Audio defaults setting below. |
+| **Monitor** | Plays the encoded stream back on this PC through `ffplay`, so you hear exactly what Discord receives. |
+| **Mute bot** | Server-mutes the bot without stopping the encoder, so restarting audio afterwards is instant. |
+| **Stop** | Ends the stream and leaves the channel. |
+| **Raise channel to server maximum** | Sets the voice channel's own bitrate to the server's boost ceiling. Needs Manage Channels. |
+| **Save current route** / **Saved routes** | Stores destination, source, bitrate and gain as one entry, so a repeat setup is a single click. |
+
+### Stream tab: what the numbers mean
+
+| Readout | Meaning |
+| --- | --- |
+| **Capture** | The negotiated format coming out of the source — sample rate, depth, channels. |
+| **State** | The @discordjs/voice player state. `playing` is the healthy one. |
+| **Bitrate** | The target handed to the encoder. In the default `on` VBR mode the delivered average floats around this figure rather than matching it exactly. |
+| **UDP ping** | Round trip to Discord's voice server. |
+| **Jitter buffer** | Current buffer depth against its target. Steady is good; sawtoothing means the source is delivering unevenly. |
+| **Silence filled** | Silence inserted because the buffer ran dry. A little at startup is normal; a climbing figure means the source keeps stalling. |
+| **Drift trimmed** | Audio removed to correct clock drift between the source and Discord's 48 kHz timebase. Expected to creep up slowly forever. |
+| **Overruns** | Audio discarded because the buffer was full and the encoder could not keep up. Should stay at `none`. |
+| **Restarts** | Times the encoder was rebuilt under a live connection, for example on a bitrate change. |
+| **Level meters** | Per-channel peak and RMS in dBFS. The peak marker holds briefly so short transients stay visible. |
+
+### Setup tab: Discord credentials
+
+| Setting | What it does |
+| --- | --- |
+| **Bot token** | The only required credential. Stored in `.env`, never logged and never sent anywhere else. **restart** |
+| **Application ID** | Optional. Derived from the token automatically; set it only if the token and application deliberately differ. **restart** |
+| **Dev server ID** | Registers slash commands to one server instantly instead of globally, which can take up to an hour to propagate. |
+
+### Setup tab: Audio defaults
+
+| Setting | What it does |
+| --- | --- |
+| **Loudness handling** | `off` leaves the signal alone. `limit` adds a true-peak limiter so boosted gain cannot clip on decode. `match` adds EBU R128 normalisation on top, for sources that differ wildly in level. |
+| **VBR mode** | `on` lets Opus spend bits where the content needs them. `constrained` keeps the same quality-per-bit but caps peaks at the target. `off` is constant bitrate. **restart** |
+| **Encoder complexity** | 0–10 encoder effort. 10 is the libopus default and costs little on a modern CPU. **restart** |
+| **Jitter buffer (ms)** | How much audio the capture helper holds before handing it on. Higher survives a stuttering source, and adds latency 1:1. **restart** |
+| **Bitrate override (bps)** | Pins every new stream to one bitrate. Blank means match whatever the voice channel is set to, which is almost always what you want. |
+
+### Setup tab: Presence and automation
+
+| Setting | What it does |
+| --- | --- |
+| **Under the bot** | Shows the source or track as the bot's "Listening to …" activity. |
+| **On the voice channel** | Writes the same text into the channel's status line, visible to everyone in the server. Needs the Set Voice Channel Status permission. |
+| **Prefer the host's now-playing track** | Uses the Windows media session's track title instead of the application name wherever one is available. |
+| **Stop after this long with no listeners** | Disconnects once the channel has been empty of humans this long. `0` never disconnects. **restart** |
+| **Follow this user between channels** | Moves a *running* stream to whichever voice channel that Discord user joins. It never starts a stream on its own. **restart** |
+| **Resume the last route on start** | Restores the last successful route once the bot signs in. Off until you opt in, so a crash loop cannot rejoin a channel over and over. **restart** |
+
+### Setup tab: Advanced system settings
+
+| Setting | What it does |
+| --- | --- |
+| **ffmpeg** | Path to the ffmpeg binary. Blank uses whatever is on `PATH`. **restart** |
+| **AudioTap.exe** | Path to the capture helper. Blank uses the bundled or checkout copy. **restart** |
+| **Loudness target (LUFS)** | Integrated loudness aimed for by `match`. −14 matches what most streaming platforms normalise to. **restart** |
+| **True-peak ceiling (dBTP)** | Ceiling for both the limiter and the normaliser. −1 leaves headroom for intersample peaks. **restart** |
+| **Log level** | `debug` prints the exact ffmpeg command line and every capture event, which is what to send with a bug report. **restart** |
+| **Log file** | JSON-lines log inside the runtime root, rotating at 10 MiB. `off` disables disk logging entirely. **restart** |
+| **Remote bind address** | Which interface the phone dashboard listens on. Loopback by default; use one trusted interface, or `0.0.0.0` for every LAN address. **restart** |
+| **Remote control port** | `0` keeps remote access off. Any other port opts in. **restart** |
+| **Trust Tailscale devices** | Lets peers the local Tailscale daemon can identify connect without the app token. LAN clients still need the token. Leave off unless the whole tailnet is yours. **restart** |
+
+### Setup tab: actions
+
+| Button | What it does |
+| --- | --- |
+| **Save settings** | Writes every changed field to `.env` and reports which ones need a restart. |
+| **Build AudioTap** | Compiles the capture helper from the checkout. Packaged installs ship it prebuilt. |
+| **Register slash commands** | Pushes the command definitions to Discord — to one server if a dev server ID is set, otherwise globally. |
+| **Run diagnostics** | Probes ffmpeg, libopus, the capture helper and the voice dependencies, then reports what is missing. |
+| **Copy report** | Copies the diagnostics result plus versions and a log tail, with no secrets, for pasting into an issue. |
+| **Quit app** | Stops every stream, closes the connection and exits cleanly. |
+
+### Keys with no panel field
+
+Set these in `.env` directly.
+
+| Variable | What it does |
+| --- | --- |
+| `CONTROL_PORT` | Control panel port, loopback only. `0` disables the panel and leaves slash commands as the only interface. **restart** |
+| `CONTROL_OPEN` | Opens the control panel in your browser when the bot starts. Default `false`. |
+| `REMOTE_TOKEN` | Pins the remote dashboard's secret instead of using the generated `.remote-token`. Only useful for scripted deployments. |
+| `FFPLAY_PATH` | Player used by the Monitor button. Blank uses `PATH`; a full ffmpeg build already includes it. |
 
 ## How it is put together
 

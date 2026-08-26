@@ -3,9 +3,12 @@
 Stream audio from **one application, device, or live mix** on Windows into Discord voice channels,
 with the signal path kept as short and as lossless as Discord permits.
 
-[![CI](https://github.com/AshutoshChaudhary-lgtm/discord-audio-bridge/actions/workflows/ci.yml/badge.svg)](https://github.com/AshutoshChaudhary-lgtm/discord-audio-bridge/actions/workflows/ci.yml)
+[![CI](https://github.com/pixelash459/discord-audio-bridge/actions/workflows/ci.yml/badge.svg)](https://github.com/pixelash459/discord-audio-bridge/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Node](https://img.shields.io/badge/node-%E2%89%A522.18-339933.svg)](https://nodejs.org)
+
+> I wanted something like this for my personal Discord server, when playing with friends, so I
+> made it using AI. It's 100% vibe coded.
 
 No virtual audio cable. No "Stereo Mix". Pick an app, pick a channel, and its audio is captured as
 48 kHz float and encoded to Opus once, without an intermediate decode/re-encode stage.
@@ -121,7 +124,7 @@ contains a self-contained AudioTap helper; ffmpeg remains an external runtime de
 ## Install
 
 Tagged builds are published on the
-[releases page](https://github.com/AshutoshChaudhary-lgtm/discord-audio-bridge/releases) when the
+[releases page](https://github.com/pixelash459/discord-audio-bridge/releases) when the
 release workflow completes. Artifact names use the package version in place of `<version>`:
 
 | File | Platform |
@@ -138,7 +141,7 @@ Pushing a `v*` tag runs CI, builds those assets, and publishes them on the relea
 ## Quick start
 
 ```powershell
-git clone https://github.com/AshutoshChaudhary-lgtm/discord-audio-bridge
+git clone https://github.com/pixelash459/discord-audio-bridge
 cd discord-audio-bridge
 npm run setup     # checks prerequisites, installs packages, builds AudioTap and the desktop shell
 npm run app       # launch the desktop control panel

@@ -1,6 +1,6 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "Discord Audio Bridge",
+  "productName": "Discord Audio Bridge App",
   "version": "0.1.0",
   "identifier": "io.github.ashutoshchaudhary-lgtm.discord-audio-bridge-app",
   "build": {

@@ -45,6 +45,7 @@ fn bundled_bridge_root(app: Option<&AppHandle>) -> Option<PathBuf> {
                     candidates.push(PathBuf::from("/usr/lib").join(name).join("bridge"));
                 }
                 candidates.push(PathBuf::from("/usr/lib/Discord Audio Bridge/bridge"));
+                candidates.push(PathBuf::from("/usr/lib/Discord Audio Bridge App/bridge"));
                 if let Ok(appdir) = env::var("APPDIR") {
                     let appdir = appdir.trim();
                     if !appdir.is_empty() {
@@ -53,6 +54,7 @@ fn bundled_bridge_root(app: Option<&AppHandle>) -> Option<PathBuf> {
                             candidates.push(appdir.join("usr/lib").join(name).join("bridge"));
                         }
                         candidates.push(appdir.join("usr/lib/Discord Audio Bridge/bridge"));
+                        candidates.push(appdir.join("usr/lib/Discord Audio Bridge App/bridge"));
                     }
                 }
             }

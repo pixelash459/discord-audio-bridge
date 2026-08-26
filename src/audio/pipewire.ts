@@ -97,15 +97,61 @@ async function dumpNodes(): Promise<PwNode[]> {
 }
 
 export function parsePipewireDump(raw: string): PwNode[] {
-  const parsed = JSON.parse(raw) as unknown;
-  if (!Array.isArray(parsed)) throw new Error('pw-dump returned an invalid graph.');
-  return parsed.filter(
-    (entry): entry is PwNode =>
-      typeof entry === 'object' &&
-      entry !== null &&
-      typeof (entry as Partial<PwNode>).id === 'number' &&
-      String((entry as Partial<PwNode>).type ?? '').endsWith(':Node'),
-  );
+  const merged = new Map<number, PwNode | null>();
+  for (const document of splitJsonDocuments(raw)) {
+    if (!Array.isArray(document)) throw new Error('pw-dump returned an invalid graph.');
+    for (const entry of document) {
+      if (typeof entry !== 'object' || entry === null) continue;
+      const record = entry as Partial<PwNode>;
+      if (typeof record.id !== 'number') continue;
+      // A follow-up document mentioning an id with null info is pw-dump's "node removed".
+      merged.set(record.id, record.info === null ? null : (record as PwNode));
+    }
+  }
+  if (merged.size === 0 && raw.trim() !== '[]') {
+    throw new Error('pw-dump returned no graph objects.');
+  }
+  return [...merged.values()]
+    .filter((node): node is PwNode => node !== null)
+    .filter((node) => String(node.type ?? '').endsWith(':Node'));
+}
+
+/**
+ * pw-dump normally prints the graph as one JSON array. When the graph changes while the dump is
+ * being taken, some PipeWire versions append further compact arrays (a disappearing node arrives
+ * as [{"id":N,"info":null}]), leaving concatenated documents that JSON.parse rejects outright.
+ * Split the stream on balanced top-level documents instead - strings respected - and let the
+ * caller merge them in order.
+ */
+function splitJsonDocuments(raw: string): unknown[] {
+  const documents: unknown[] = [];
+  let depth = 0;
+  let start = -1;
+  let inString = false;
+  let escaped = false;
+  for (let index = 0; index < raw.length; index += 1) {
+    const ch = raw[index]!;
+    if (inString) {
+      if (escaped) escaped = false;
+      else if (ch === '\\') escaped = true;
+      else if (ch === '"') inString = false;
+      continue;
+    }
+    if (ch === '"') {
+      inString = true;
+    } else if (ch === '[' || ch === '{') {
+      if (depth === 0) start = index;
+      depth += 1;
+    } else if (ch === ']' || ch === '}') {
+      depth -= 1;
+      if (depth === 0 && start >= 0) {
+        documents.push(JSON.parse(raw.slice(start, index + 1)) as unknown);
+        start = -1;
+      }
+    }
+  }
+  if (depth !== 0) throw new Error('pw-dump output ended inside a JSON document.');
+  return documents;
 }
 
 /** The sink WirePlumber currently routes default playback to, by node name. */

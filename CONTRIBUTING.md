@@ -96,6 +96,10 @@ CI runs TypeScript, semantic HTML/JS, npm security, and authenticated HTTP/WebSo
 Node 22.18 and 26. It builds both .NET 10 C# projects with warnings as errors and packages
 Windows x64. Please do not suppress a warning without explaining why in a comment.
 
+Every pull request gets that full set. Pushes straight to `main` run only the Node checks, because
+the Windows jobs take several minutes to re-prove what the pull request already established; they
+come back on a `v*` tag, where they gate the release, and on a manual run of the CI workflow.
+
 ## Style
 
 Match what is already there. A few things that are deliberate:

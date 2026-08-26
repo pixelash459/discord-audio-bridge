@@ -67,6 +67,14 @@ jobs:
 
   native:
     name: Native (Windows)
+    # Windows runners are the slow half of this workflow, and on a src/ or web/ commit they
+    # re-prove what the Ubuntu check job already covered. Run them where the answer can still
+    # change something: on pull requests, on the version tags that build a release, and on a
+    # manual dispatch when you want a full pass before tagging.
+    if: >-
+      github.event_name == 'pull_request' ||
+      github.event_name == 'workflow_dispatch' ||
+      startsWith(github.ref, 'refs/tags/v')
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -110,6 +118,14 @@ jobs:
 
   package:
     name: Package windows-x64
+    # Windows runners are the slow half of this workflow, and on a src/ or web/ commit they
+    # re-prove what the Ubuntu check job already covered. Run them where the answer can still
+    # change something: on pull requests, on the version tags that build a release, and on a
+    # manual dispatch when you want a full pass before tagging.
+    if: >-
+      github.event_name == 'pull_request' ||
+      github.event_name == 'workflow_dispatch' ||
+      startsWith(github.ref, 'refs/tags/v')
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1

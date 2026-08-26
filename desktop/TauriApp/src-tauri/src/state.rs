@@ -37,6 +37,8 @@ pub enum Phase {
     Attached,
     /// Something failed; the loader screen explains and offers Retry.
     Failed,
+    /// No bot token anywhere: the setup form is shown before any bridge is started.
+    SetupNeeded,
 }
 
 #[derive(Clone, Serialize)]
@@ -91,6 +93,8 @@ pub struct Inner {
     pub quitting: bool,
     /// Set by the loader's Retry button; the supervisor checks it while waiting after a failure.
     pub retry: bool,
+    /// Set once setup saved a token; wakes the supervisor out of SetupNeeded.
+    pub token_saved: bool,
     /// Where the loader screen lives, remembered so the shell can navigate back to it.
     pub home_url: Option<String>,
     /// Last observed main-window URL, for navigation-change logging.
@@ -114,6 +118,7 @@ impl Inner {
             child: None,
             quitting: false,
             retry: false,
+            token_saved: false,
             home_url: None,
             last_nav_url: None,
             logs_dir: None,

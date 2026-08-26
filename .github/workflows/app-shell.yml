@@ -40,6 +40,25 @@ jobs:
           sudo apt-get install -y libwebkit2gtk-4.1-dev build-essential curl wget file \
             libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev xdg-utils
 
+      # The Windows app bundles the whole bridge inside itself, so the MSI is self-contained:
+      # setup asks for the token, saves it, and starts the bundled bridge. Node 26 is required
+      # to build the single-executable bridge.
+      - uses: actions/setup-node@94196ee1d15439c1b6651cd87ef14e88ec435966
+        if: runner.os == 'Windows'
+        with:
+          node-version: 26
+
+      - name: Build and stage the bridge payload
+        if: runner.os == 'Windows'
+        working-directory: .
+        run: |
+          npm ci --no-fund --no-audit
+          node scripts/package.mjs
+          New-Item -ItemType Directory -Force desktop/TauriApp/src-tauri/bridge-payload | Out-Null
+          Copy-Item -Recurse -Force dist/stage/discord-audio-bridge/* desktop/TauriApp/src-tauri/bridge-payload/
+          Get-ChildItem desktop/TauriApp/src-tauri/bridge-payload | Select-Object -ExpandProperty Name
+        shell: pwsh
+
       - name: Install npm dependencies
         run: npm ci
 

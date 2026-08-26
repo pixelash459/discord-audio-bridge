@@ -8,36 +8,57 @@
   <link rel="stylesheet" href="style.css" />
 </head>
 <body>
-  <main class="shell" id="shell">
+  <main class="shell">
     <header class="brand">
       <span class="headphones" aria-hidden="true">🎧</span>
       <h1>Discord Audio Bridge</h1>
     </header>
 
-    <section class="card" aria-live="polite">
-      <div class="status">
-        <div id="spinner" class="spinner" aria-hidden="true"></div>
+    <div id="ipcerror" class="banner" role="alert" hidden>
+      The app runtime did not initialize. Restart the application; if this keeps happening,
+      please report it.
+    </div>
+
+    <!-- One status line, always in the same place, always one line tall. -->
+    <section class="status" aria-live="polite">
+      <div id="spinner" class="spinner" aria-hidden="true"></div>
+      <div class="status-text">
         <p id="phase" class="phase">Looking for a running bridge…</p>
-        <p id="detail" class="detail">the control panel will appear here</p>
+        <p id="detail" class="detail"></p>
       </div>
-
-      <div id="errorbox" class="errorbox" hidden>
-        <button id="retry" class="retry" type="button">Retry</button>
-        <button id="openlogs" class="openlogs" type="button">Open logs folder</button>
-      </div>
-
-      <div id="panelbox" class="errorbox" hidden>
-        <p class="hint-left">The bridge is up. If the panel did not open by itself:</p>
-        <button id="openpanel" class="retry" type="button">Open the control panel</button>
-      </div>
-
-      <details id="logsdetails" class="logs" hidden>
-        <summary>Bridge output</summary>
-        <pre id="logs"></pre>
-      </details>
     </section>
 
-    <p class="hint">Close the window any time — the bridge keeps streaming from the tray.</p>
+    <!-- First-run setup: shown instead of any spawn attempt. -->
+    <form id="setup" class="card" hidden>
+      <h2 class="card-title">Add your bot token</h2>
+      <p class="card-text">
+        Create a bot at <strong>discord.com/developers/applications</strong>, open
+        <strong>Bot</strong>, press <strong>Reset Token</strong>, and paste it here. It is saved
+        to this computer only.
+      </p>
+      <label class="field">
+        <span>Bot token</span>
+        <input id="token" type="password" autocomplete="off" placeholder="paste the bot token" required />
+      </label>
+      <label class="field">
+        <span>Application ID <em>(optional)</em></span>
+        <input id="appid" type="text" autocomplete="off" placeholder="usually filled in for you" />
+      </label>
+      <button id="save" class="primary" type="submit">Save and start the bridge</button>
+      <p id="setuperror" class="field-error" hidden></p>
+    </form>
+
+    <!-- Recovery actions: stacked, identical height, same width. -->
+    <div id="actions" class="actions" hidden>
+      <button id="retry" class="primary" type="button" hidden>Try again</button>
+      <button id="openpanel" type="button" hidden>Open the control panel</button>
+      <button id="openlogs" type="button" hidden>Open logs folder</button>
+    </div>
+
+    <details id="logsdetails" class="logs" hidden>
+      <summary>Bridge output</summary>
+      <pre id="logs"></pre>
+    </details>
   </main>
 
   <script src="loader.js"></script>

@@ -70,8 +70,9 @@ pub fn run() {
             shell_open_logs,
             shell_show,
             shell_hello,
-            shell_open_panel
-        ])
+            shell_open_panel,
+            shell_save_setup
+        ]
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
         .run(|app, event| {
@@ -162,4 +163,19 @@ fn shell_open_panel(app: AppHandle) -> Result<(), String> {
         }
         None => Err("the bridge is not attached yet".into()),
     }
+}
+
+/// First-run setup: persist the bot token (and optional application id) where the bridge will
+/// load it, then wake the supervisor so it starts the bridge right away.
+#[tauri::command]
+fn shell_save_setup(app: AppHandle, token: String, appId: Option<String>) -> Result<(), String> {
+    bridge::save_setup(&token, appId.as_deref())?;
+    {
+        let state = app.state::<ShellState>();
+        let mut inner = state.0.lock().unwrap();
+        inner.token_saved = true;
+        inner.retry = true;
+    }
+    bridge::emit_status(&app);
+    Ok(())
 }

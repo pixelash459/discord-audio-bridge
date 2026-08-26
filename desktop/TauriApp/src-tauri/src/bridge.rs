@@ -167,6 +167,112 @@ fn probe_saved_endpoint(agent: &ureq::Agent) -> Option<Endpoint> {
     body.get("bot").is_some().then_some(endpoint)
 }
 
+/* ── first-run setup ──────────────────────────────────────────────────────── */
+
+/// Whether a bot token exists anywhere the bridge would look: the process environment or any
+/// candidate runtime root's .env. Mirrors the bridge's own loadEnvFiles precedence loosely -
+/// for a yes/no decision, finding it in any one place is enough.
+fn has_saved_token() -> bool {
+    if env::var("DISCORD_TOKEN").map(|v| !v.trim().is_empty()).unwrap_or(false) {
+        return true;
+    }
+    control_token_candidates().iter().any(|root| {
+        fs::read_to_string(root.join(".env"))
+            .map(|raw| env_value(&raw, "DISCORD_TOKEN").is_some())
+            .unwrap_or(false)
+    })
+}
+
+/// Read one KEY=VALUE from .env text. Same tolerant shape the bridge's parser accepts:
+/// optional surrounding quotes, anything after # in an unquoted value ignored.
+fn env_value(raw: &str, key: &str) -> Option<String> {
+    for line in raw.lines() {
+        let line = line.trim();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        let Some((k, v)) = line.split_once('=') else { continue };
+        if k.trim() != key {
+            continue;
+        }
+        let mut value = v.trim();
+        if let Some(hash) = value.find('#') {
+            if !value.starts_with('"') && !value.starts_with(''') {
+                value = value[..hash].trim();
+            }
+        }
+        let trimmed = value.trim_matches('"').trim_matches('\'');
+        return (!trimmed.is_empty()).then(|| trimmed.to_string());
+    }
+    None
+}
+
+/// Write setup answers into the runtime root's .env, preserving every other line. This is the
+/// exact file the spawned bridge loads (its runtimeRoot resolves the same way), so saving here
+/// is what makes the next spawn able to sign in.
+pub fn save_setup(token: &str, app_id: Option<&str>) -> Result<(), String> {
+    let token = token.trim();
+    if token.is_empty() {
+        return Err("the bot token is empty".into());
+    }
+    if token.contains(|c: char| c.is_whitespace() || c == '"' || c == '\') {
+        return Err("the bot token contains characters that cannot be saved safely".into());
+    }
+    if let Some(app_id) = app_id {
+        if app_id.contains(|c: char| c.is_whitespace() || c == '"' || c == '\') {
+            return Err("the application id contains characters that cannot be saved safely".into());
+        }
+    }
+
+    let root = runtime_root();
+    fs::create_dir_all(&root).map_err(|e| format!("could not create {}: {e}", root.display()))?;
+    let path = root.join(".env");
+    let existing = fs::read_to_string(&path).unwrap_or_default();
+
+    let mut out = String::with_capacity(existing.len() + 96);
+    let mut wrote_token = false;
+    let mut wrote_app_id = false;
+    for line in existing.lines() {
+        let trimmed = line.trim();
+        let is_key = |key: &str| {
+            trimmed.starts_with(key)
+                && trimmed[key.len()..].trim_start().starts_with('=')
+        };
+        if is_key("DISCORD_TOKEN") {
+            out.push_str("DISCORD_TOKEN=");
+            out.push_str(token);
+            wrote_token = true;
+        } else if is_key("DISCORD_APP_ID") {
+            match app_id.map(str::trim).filter(|s| !s.is_empty()) {
+                Some(app_id) => {
+                    out.push_str("DISCORD_APP_ID=");
+                    out.push_str(app_id);
+                    wrote_app_id = true;
+                }
+                None => out.push_str(line),
+            }
+        } else {
+            out.push_str(line);
+        }
+        out.push('\n');
+    }
+    if !wrote_token {
+        out.push_str("DISCORD_TOKEN=");
+        out.push_str(token);
+        out.push('\n');
+    }
+    if !wrote_app_id {
+        if let Some(app_id) = app_id.map(str::trim).filter(|s| !s.is_empty()) {
+            out.push_str("DISCORD_APP_ID=");
+            out.push_str(app_id.trim());
+            out.push('\n');
+        }
+    }
+
+    fs::write(&path, out).map_err(|e| format!("could not write {}: {e}", path.display()))?;
+    Ok(())
+}
+
 /* ── spawning ─────────────────────────────────────────────────────────────── */
 
 fn spawn_bridge(app: &AppHandle) -> Result<Child, String> {
@@ -398,7 +504,38 @@ is CONTROL_PORT disabled, or is the port already taken?",
             continue;
         }
 
-        // 4. No bridge anywhere: start one - unless earlier attempts already used the budget.
+        // 4. No bridge anywhere. Before starting one, make sure a bot token exists:
+        //    a bridge without credentials only leads to a confusing panel. The setup form
+        //    is the whole first-run experience; nothing spawns until it is filled in.
+        if !has_saved_token() {
+            set_phase(
+                &app,
+                Phase::SetupNeeded,
+                "no bot token configured yet - enter one to start",
+            );
+            while !is_quitting(&app) {
+                {
+                    let state = app.state::<ShellState>();
+                    let inner = state.0.lock().unwrap();
+                    if inner.token_saved {
+                        break;
+                    }
+                }
+                // A bridge may appear while the form is open (user ran npm start, say), or a
+                // token may land in an .env by hand - both should let the app move on.
+                if probe_saved_endpoint(&agent(&app)).is_some() || has_saved_token() {
+                    break;
+                }
+                thread::sleep(Duration::from_millis(250));
+            }
+            {
+                let state = app.state::<ShellState>();
+                state.0.lock().unwrap().token_saved = false;
+            }
+            continue;
+        }
+
+        // 5. Start one - unless earlier attempts already used the budget.
         if failed_starts >= MAX_START_ATTEMPTS {
             set_phase(
                 &app,
@@ -454,7 +591,7 @@ is CONTROL_PORT disabled, or is the port already taken?",
             }
         }
 
-        // 5. After a failure, wait quietly before trying again, unless the user retries first.
+        // 6. After a failure, wait quietly before trying again, unless the user retries first.
         let deadline = Instant::now() + FAILURE_BACKOFF;
         while Instant::now() < deadline {
             if is_quitting(&app) {

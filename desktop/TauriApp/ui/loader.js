@@ -35,11 +35,22 @@ function render(status) {
   const phase = String(status?.phase ?? 'locating');
   const detail = String(status?.detail ?? '');
 
+  document.body.dataset.phase = phase;
   phaseEl.textContent = PHASE_TEXT[phase] ?? phase;
   detailEl.textContent = detail;
-  spinner.classList.toggle('stopped', phase === 'failed' || phase === 'setup-needed');
+  spinner.classList.toggle(
+    'stopped',
+    phase === 'failed' || phase === 'setup-needed' || phase === 'attached',
+  );
 
   setup.hidden = phase !== 'setup-needed';
+  if (phase === 'setup-needed') {
+    const save = el('save');
+    if (save) {
+      save.disabled = false;
+      save.textContent = 'Save and start the bridge';
+    }
+  }
   actions.hidden = phase !== 'failed' && phase !== 'attached';
   retryBtn.hidden = phase !== 'failed';
   openlogsBtn.hidden = phase !== 'failed';

@@ -134,8 +134,11 @@ impl Inner {
         self.logs.push_str(line);
         self.logs.push('\n');
         if self.logs.len() > 8000 {
-            let cut = self.logs.len() - 8000;
-            self.logs = self.logs[cut..].to_string();
+            let mut cut = self.logs.len() - 8000;
+            while cut < self.logs.len() && !self.logs.is_char_boundary(cut) {
+                cut += 1;
+            }
+            self.logs.replace_range(..cut, "");
         }
     }
 }
@@ -145,5 +148,6 @@ pub struct ShellState(pub Mutex<Inner>);
 /// Stored handles for tray menu items whose state changes at runtime.
 pub struct TrayMenu {
     pub mute: tauri::menu::MenuItem<tauri::Wry>,
+    pub stop: tauri::menu::MenuItem<tauri::Wry>,
     pub autostart: tauri::menu::CheckMenuItem<tauri::Wry>,
 }

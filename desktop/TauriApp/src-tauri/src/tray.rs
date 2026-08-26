@@ -10,19 +10,21 @@ use crate::state::{tooltip, ShellState, TrayMenu};
 /// actually take. Same jobs as the WinForms shell it replaces, autostart included.
 pub fn create(app: &AppHandle) -> tauri::Result<()> {
     let show = MenuItem::with_id(app, "show", "Show Discord Audio Bridge", true, None::<&str>)?;
-    let mute = MenuItem::with_id(app, "mute", "Mute", true, None::<&str>)?;
-    let stop = MenuItem::with_id(app, "stop", "Stop stream", true, None::<&str>)?;
+    let mute = MenuItem::with_id(app, "mute", "Mute", false, None::<&str>)?;
+    let stop = MenuItem::with_id(app, "stop", "Stop stream", false, None::<&str>)?;
     let logs = MenuItem::with_id(app, "logs", "Open logs folder", true, None::<&str>)?;
     let autostart_enabled = {
         use tauri_plugin_autostart::ManagerExt;
         app.autolaunch().is_enabled().unwrap_or(false)
     };
+    // with_id(manager, id, text, enabled, checked, accelerator): the item must stay
+    // clickable so the user can turn autostart on; `checked` mirrors the OS registration.
     let autostart = CheckMenuItem::with_id(
         app,
         "autostart",
         "Start with your computer",
-        autostart_enabled,
         true,
+        autostart_enabled,
         None::<&str>,
     )?;
     let separator = PredefinedMenuItem::separator(app)?;
@@ -56,7 +58,7 @@ pub fn create(app: &AppHandle) -> tauri::Result<()> {
         })
         .build(app)?;
 
-    app.manage(TrayMenu { mute, autostart });
+    app.manage(TrayMenu { mute, stop, autostart });
     Ok(())
 }
 
@@ -70,15 +72,23 @@ fn toggle_autostart(app: &AppHandle) {
     } else {
         manager.enable()
     };
-    if let Err(e) = result {
-        eprintln!("could not change autostart: {e}");
-    }
-    if let Some(menu) = app.try_state::<TrayMenu>() {
-        let _ = menu.autostart.set_checked(!now_enabled);
+    match result {
+        Ok(()) => {
+            if let Some(menu) = app.try_state::<TrayMenu>() {
+                let _ = menu.autostart.set_checked(!now_enabled);
+            }
+        }
+        Err(e) => {
+            eprintln!("could not change autostart: {e}");
+            // Keep the checkbox honest if the OS registration did not change.
+            if let Some(menu) = app.try_state::<TrayMenu>() {
+                let _ = menu.autostart.set_checked(now_enabled);
+            }
+        }
     }
 }
 
-/// Called after every successful state poll: keep tooltip and mute label in step.
+/// Called after every successful state poll: keep tooltip and mute/stop labels in step.
 pub fn refresh(app: &AppHandle) {
     let (summary, endpoint) = {
         let state = app.state::<ShellState>();
@@ -92,8 +102,9 @@ pub fn refresh(app: &AppHandle) {
     if let Some(menu) = app.try_state::<TrayMenu>() {
         let label = if summary.muted { "Unmute" } else { "Mute" };
         let _ = menu.mute.set_text(label);
-        let enabled = endpoint && summary.streaming && summary.guild_id.is_some();
-        let _ = menu.mute.set_enabled(enabled);
+        let can_control = endpoint && summary.streaming && summary.guild_id.is_some();
+        let _ = menu.mute.set_enabled(can_control);
+        let _ = menu.stop.set_enabled(can_control);
     }
 }
 

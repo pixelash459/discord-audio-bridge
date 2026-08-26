@@ -133,14 +133,10 @@ fn control_token_candidates() -> Vec<PathBuf> {
     roots
 }
 
-/// Read and validate `.control-token`, then prove the bridge behind it answers with a
+/// Read and validate a `.control-token`, then prove the bridge behind it answers with a
 /// snapshot - the same contract as findRunningControlPanel() in src/control/launcher.ts.
-/// A stale file after a crash is normal and simply means "not attachable".
-fn probe_saved_endpoint(agent: &ureq::Agent) -> Option<Endpoint> {
-    let path = control_token_candidates()
-        .iter()
-        .map(|root| root.join(".control-token"))
-        .find(|p| p.is_file())?;
+/// A stale file after a crash is normal and simply means "not attachable" for that root.
+fn probe_token_file(agent: &ureq::Agent, path: &Path) -> Option<Endpoint> {
     let raw = fs::read_to_string(path).ok()?;
     let saved: Value = serde_json::from_str(&raw).ok()?;
     let port = saved.get("port")?.as_u64()?;
@@ -167,7 +163,28 @@ fn probe_saved_endpoint(agent: &ureq::Agent) -> Option<Endpoint> {
     body.get("bot").is_some().then_some(endpoint)
 }
 
+/// Try every candidate runtime root. A stale `.control-token` in an earlier root must not
+/// hide a live bridge whose token lives somewhere else (project dir vs per-user state dir).
+fn probe_saved_endpoint(agent: &ureq::Agent) -> Option<Endpoint> {
+    control_token_candidates()
+        .into_iter()
+        .map(|root| root.join(".control-token"))
+        .filter(|path| path.is_file())
+        .find_map(|path| probe_token_file(agent, &path))
+}
+
 /* ── first-run setup ──────────────────────────────────────────────────────── */
+
+/// A value that survives a plain KEY=VALUE .env line without quoting games: no whitespace,
+/// no quotes, no backslash, no comment marker. Written with unicode escapes so no tool in
+/// the pipeline can mangle the literals again.
+fn savable(value: &str) -> bool {
+    !value.chars().any(char::is_whitespace)
+        && !value.contains('\u{22}')
+        && !value.contains('\u{5c}')
+        && !value.contains('\u{27}')
+        && !value.contains('\u{23}')
+}
 
 /// Whether a bot token exists anywhere the bridge would look: the process environment or any
 /// candidate runtime root's .env. Mirrors the bridge's own loadEnvFiles precedence loosely -
@@ -197,11 +214,12 @@ fn env_value(raw: &str, key: &str) -> Option<String> {
         }
         let mut value = v.trim();
         if let Some(hash) = value.find('#') {
-            if !value.starts_with('"') && !value.starts_with(''') {
+            let quoted = value.starts_with('"') || value.starts_with('\u{27}');
+            if !quoted {
                 value = value[..hash].trim();
             }
         }
-        let trimmed = value.trim_matches('"').trim_matches('\'');
+        let trimmed = value.trim_matches('"').trim_matches('\u{27}');
         return (!trimmed.is_empty()).then(|| trimmed.to_string());
     }
     None
@@ -215,11 +233,11 @@ pub fn save_setup(token: &str, app_id: Option<&str>) -> Result<(), String> {
     if token.is_empty() {
         return Err("the bot token is empty".into());
     }
-    if token.contains(|c: char| c.is_whitespace() || c == '"' || c == '\') {
+    if !savable(token) {
         return Err("the bot token contains characters that cannot be saved safely".into());
     }
     if let Some(app_id) = app_id {
-        if app_id.contains(|c: char| c.is_whitespace() || c == '"' || c == '\') {
+        if !savable(app_id) {
             return Err("the application id contains characters that cannot be saved safely".into());
         }
     }
@@ -363,6 +381,10 @@ fn start_child(app: &AppHandle, program: &Path, args: &[PathBuf], cwd: &Path) ->
         .args(args)
         .current_dir(cwd)
         .env("FORCE_COLOR", "0")
+        // Same writable root save_setup uses. Without this, a packaged bridge whose
+        // install folder is writable treats that folder as runtimeRoot and never sees
+        // the AppData .env the first-run form just wrote.
+        .env("BRIDGE_RUNTIME_ROOT", runtime_root())
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
@@ -576,6 +598,9 @@ is CONTROL_PORT disabled, or is the port already taken?",
                         failed_starts += 1;
                     }
                     WaitOutcome::Timeout(_) => {
+                        // Same as the owns_live_child timeout path: a panel-less child will
+                        // only burn another START_BUDGET if left alive, so stop it now.
+                        kill_owned_child(&app);
                         set_phase(
                             &app,
                             Phase::Failed,
@@ -861,11 +886,18 @@ pub fn set_phase(app: &AppHandle, phase: Phase, detail: &str) {
         let mut inner = state.0.lock().unwrap();
         inner.phase = phase;
         inner.detail = detail.to_string();
-        if phase == Phase::Failed || phase == Phase::Locating {
+        if phase == Phase::Failed || phase == Phase::Locating || phase == Phase::SetupNeeded {
             inner.endpoint = None;
+            inner.summary = Summary::default();
         }
     }
+    // The panel page cannot show loader UI (retry, setup, status). Whenever we leave
+    // Attached, bring the webview back so those screens are reachable again.
+    if phase != Phase::Attached {
+        navigate_home(app);
+    }
     emit_status(app);
+    crate::tray::refresh(app);
 }
 
 pub fn emit_status(app: &AppHandle) {

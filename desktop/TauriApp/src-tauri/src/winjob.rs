@@ -6,6 +6,7 @@
 
 use std::io;
 use std::mem::size_of;
+use std::os::windows::io::AsRawHandle;
 use std::process::Child;
 
 use windows::core::PCWSTR;

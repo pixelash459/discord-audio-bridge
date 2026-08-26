@@ -33,7 +33,14 @@ libc = "0.2"
 
 [target.'cfg(windows)'.dependencies]
 # Kill-on-close job object, so the bridge child never outlives this shell - even on a crash.
-windows = { version = "0.62", features = ["Win32_Foundation", "Win32_System_JobObjects"] }
+# CreateJobObjectW additionally gates on Win32_Security and the JOBOBJECT struct on
+# Win32_System_Threading - both discovered the hard way on CI; keep them listed.
+windows = { version = "0.62", features = [
+  "Win32_Foundation",
+  "Win32_System_JobObjects",
+  "Win32_Security",
+  "Win32_System_Threading",
+] }
 
 [profile.release]
 codegen-units = 1

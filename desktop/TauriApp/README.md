@@ -26,8 +26,9 @@ WebKitGTK on Linux) instead of bundling Chromium.
 - **Attach or launch.** On start it looks for a bridge that already answers — so `npm start` in a
   terminal and the app share one session — and only when nothing answers does it spawn one. From
   this checkout it finds the bridge automatically (the same `web/index.html` walk-up the bot
-  itself uses); elsewhere, point `BRIDGE_PROJECT_ROOT` at a checkout or put the packaged
-  executable in a `bridge/` folder (or set `BRIDGE_EXECUTABLE`).
+  itself uses). Release installers (Windows MSI, Linux deb/rpm/AppImage) bundle the bridge inside
+  the app under a `bridge/` resource folder. Elsewhere, point `BRIDGE_PROJECT_ROOT` at a checkout
+  or set `BRIDGE_EXECUTABLE`.
 - **Loader screen.** A small status page shows what the shell is doing; when the bridge's panel
   answers, the window navigates to it with the access token in a URL fragment, exactly like the
   browser flow.
@@ -74,6 +75,10 @@ The supervisor walks up from the running executable to find a directory containi
 one. Runtime state (`.control-token`, logs) resolves exactly like the bridge's own
 `runtimeRoot()`.
 
+Release builds stage the portable bridge layout into `src-tauri/bridge-payload/` (via
+`scripts/package.mjs`) and Tauri embeds it as the `bridge/` resource. Linux packages resolve
+that folder through Tauri's resource directory (not `/usr/bin`), and the shell sets
+`BRIDGE_PROJECT_ROOT` so the control panel's `web/` assets load.
 ## Layout
 
 ```text
@@ -97,4 +102,6 @@ remains the bridge's separate, restricted dashboard on port 8788.
 ## CI
 
 `.github/workflows/app-shell.yml` builds Windows, Ubuntu 22.04 (low glibc baseline), and native
-Linux arm64 bundles on pushes to this branch and pull requests touching this folder.
+Linux arm64 bundles on pushes to this branch and pull requests touching this folder. Every
+platform stages the bridge payload before `tauri build`, so the uploaded MSI/deb/rpm/AppImage
+installers are self-contained.

@@ -23,15 +23,59 @@ const MAX_START_ATTEMPTS: u32 = 3;
 
 /* ── path discovery ───────────────────────────────────────────────────────── */
 
+/// Directory that contains the packaged bridge executable + web/ assets, when this shell
+/// was built with the bridge-payload resource bundle. On Windows that sits next to the
+/// app exe; on Linux deb/rpm/AppImage it lives under Tauri's resource dir
+/// (`/usr/lib/<exe>/bridge` or `$APPDIR/usr/lib/<exe>/bridge`).
+fn bundled_bridge_root(app: Option<&AppHandle>) -> Option<PathBuf> {
+    let mut candidates: Vec<PathBuf> = Vec::new();
+    if let Some(app) = app {
+        if let Ok(dir) = app.path().resource_dir() {
+            candidates.push(dir.join("bridge"));
+        }
+    }
+    if let Ok(exe) = env::current_exe() {
+        if let Some(dir) = exe.parent() {
+            candidates.push(dir.join("bridge"));
+            // Linux installers put resources under /usr/lib/<name>/, while the binary
+            // itself is in /usr/bin/. Tauri's resource_dir() uses the exe basename, but the
+            // deb/rpm bundler historically copies resources under productName - try both.
+            if cfg!(target_os = "linux") {
+                if let Some(name) = exe.file_name() {
+                    candidates.push(PathBuf::from("/usr/lib").join(name).join("bridge"));
+                }
+                candidates.push(PathBuf::from("/usr/lib/Discord Audio Bridge/bridge"));
+                if let Ok(appdir) = env::var("APPDIR") {
+                    let appdir = appdir.trim();
+                    if !appdir.is_empty() {
+                        let appdir = PathBuf::from(appdir);
+                        if let Some(name) = exe.file_name() {
+                            candidates.push(appdir.join("usr/lib").join(name).join("bridge"));
+                        }
+                        candidates.push(appdir.join("usr/lib/Discord Audio Bridge/bridge"));
+                    }
+                }
+            }
+        }
+    }
+    candidates
+        .into_iter()
+        .find(|dir| dir.join("web").join("index.html").is_file())
+}
+
 /// Mirrors findProjectRoot() in the bridge's src/config.ts: walk up from the executable
 /// (or BRIDGE_PROJECT_ROOT) until a directory containing web/index.html appears.
-fn find_project_root() -> Option<PathBuf> {
+fn find_project_root(app: Option<&AppHandle>) -> Option<PathBuf> {
     if let Ok(root) = env::var("BRIDGE_PROJECT_ROOT") {
         let root = root.trim();
         if !root.is_empty() {
             let path = PathBuf::from(root);
             return path.join("web").join("index.html").is_file().then_some(path);
         }
+    }
+
+    if let Some(bundled) = bundled_bridge_root(app) {
+        return Some(bundled);
     }
 
     let exe_dir = env::current_exe().ok()?.parent()?.to_path_buf();
@@ -60,14 +104,14 @@ fn find_project_root() -> Option<PathBuf> {
 
 /// Mirrors runtimeRoot() in the bridge's src/config.ts: the project root when writable,
 /// otherwise the per-user state directory a read-only install uses.
-fn runtime_root() -> PathBuf {
+fn runtime_root(app: Option<&AppHandle>) -> PathBuf {
     if let Ok(root) = env::var("BRIDGE_RUNTIME_ROOT") {
         let root = root.trim();
         if !root.is_empty() {
             return PathBuf::from(root);
         }
     }
-    if let Some(project) = find_project_root() {
+    if let Some(project) = find_project_root(app) {
         if is_writable(&project) {
             return project;
         }
@@ -77,8 +121,8 @@ fn runtime_root() -> PathBuf {
 
 /// Where the bridge's persistent log lives, for the tray's "Open logs folder" action.
 /// Prefers a logs directory that actually exists among the candidate roots.
-pub fn bridge_logs_dir() -> PathBuf {
-    for root in control_token_candidates() {
+pub fn bridge_logs_dir(app: &AppHandle) -> PathBuf {
+    for root in control_token_candidates(Some(app)) {
         let logs = root.join("logs");
         if logs.is_dir() {
             return logs;
@@ -116,7 +160,7 @@ fn user_state_dir() -> PathBuf {
 /// via npm start uses the project dir, a packaged install uses the per-user state dir.
 /// Probing only one of those is why the shell used to spawn a duplicate bridge on top of
 /// a perfectly healthy system install.
-fn control_token_candidates() -> Vec<PathBuf> {
+fn control_token_candidates(app: Option<&AppHandle>) -> Vec<PathBuf> {
     let mut roots: Vec<PathBuf> = Vec::new();
     if let Ok(root) = env::var("BRIDGE_RUNTIME_ROOT") {
         let root = root.trim();
@@ -124,7 +168,10 @@ fn control_token_candidates() -> Vec<PathBuf> {
             roots.push(PathBuf::from(root));
         }
     }
-    if let Some(project) = find_project_root() {
+    // Prefer the writable runtime root the shell itself would choose - that is where
+    // save_setup wrote .env and where a spawned bridge writes .control-token.
+    roots.push(runtime_root(app));
+    if let Some(project) = find_project_root(app) {
         roots.push(project);
     }
     roots.push(user_state_dir());
@@ -165,8 +212,8 @@ fn probe_token_file(agent: &ureq::Agent, path: &Path) -> Option<Endpoint> {
 
 /// Try every candidate runtime root. A stale `.control-token` in an earlier root must not
 /// hide a live bridge whose token lives somewhere else (project dir vs per-user state dir).
-fn probe_saved_endpoint(agent: &ureq::Agent) -> Option<Endpoint> {
-    control_token_candidates()
+fn probe_saved_endpoint(app: &AppHandle, agent: &ureq::Agent) -> Option<Endpoint> {
+    control_token_candidates(Some(app))
         .into_iter()
         .map(|root| root.join(".control-token"))
         .filter(|path| path.is_file())
@@ -189,11 +236,11 @@ fn savable(value: &str) -> bool {
 /// Whether a bot token exists anywhere the bridge would look: the process environment or any
 /// candidate runtime root's .env. Mirrors the bridge's own loadEnvFiles precedence loosely -
 /// for a yes/no decision, finding it in any one place is enough.
-fn has_saved_token() -> bool {
+fn has_saved_token(app: &AppHandle) -> bool {
     if env::var("DISCORD_TOKEN").map(|v| !v.trim().is_empty()).unwrap_or(false) {
         return true;
     }
-    control_token_candidates().iter().any(|root| {
+    control_token_candidates(Some(app)).iter().any(|root| {
         fs::read_to_string(root.join(".env"))
             .map(|raw| env_value(&raw, "DISCORD_TOKEN").is_some())
             .unwrap_or(false)
@@ -228,7 +275,7 @@ fn env_value(raw: &str, key: &str) -> Option<String> {
 /// Write setup answers into the runtime root's .env, preserving every other line. This is the
 /// exact file the spawned bridge loads (its runtimeRoot resolves the same way), so saving here
 /// is what makes the next spawn able to sign in.
-pub fn save_setup(token: &str, app_id: Option<&str>) -> Result<(), String> {
+pub fn save_setup(app: &AppHandle, token: &str, app_id: Option<&str>) -> Result<(), String> {
     let token = token.trim();
     if token.is_empty() {
         return Err("the bot token is empty".into());
@@ -242,7 +289,7 @@ pub fn save_setup(token: &str, app_id: Option<&str>) -> Result<(), String> {
         }
     }
 
-    let root = runtime_root();
+    let root = runtime_root(Some(app));
     fs::create_dir_all(&root).map_err(|e| format!("could not create {}: {e}", root.display()))?;
     let path = root.join(".env");
     let existing = fs::read_to_string(&path).unwrap_or_default();
@@ -296,7 +343,7 @@ pub fn save_setup(token: &str, app_id: Option<&str>) -> Result<(), String> {
 fn spawn_bridge(app: &AppHandle) -> Result<Child, String> {
     // Development checkout: run the TypeScript entry with Node, exactly like npm start
     // and the WinForms shell do. BRIDGE_PROJECT_ROOT points at the sibling checkout.
-    if let Some(root) = find_project_root() {
+    if let Some(root) = find_project_root(Some(app)) {
         if root.join("src").join("index.ts").is_file() {
             let node = resolve_node().ok_or(
                 "found the discord-audio-bridge checkout but no Node.js on PATH \
@@ -307,12 +354,13 @@ fn spawn_bridge(app: &AppHandle) -> Result<Child, String> {
         }
     }
 
-    // Packaged layout: the bridge executable sits in a bridge/ folder next to this app.
-    let name = if cfg!(windows) { "discord-audio-bridge.exe" } else { "discord-audio-bridge" };
-    let exe_dir = env::current_exe()
-        .ok()
-        .and_then(|p| p.parent().map(|d| d.to_path_buf()))
-        .ok_or("cannot locate this application's own directory")?;
+    // Packaged layout: the bridge executable sits in a bridge/ folder next to this app
+    // (Windows) or under Tauri's resource dir (Linux deb/rpm/AppImage).
+    let name = if cfg!(windows) {
+        "discord-audio-bridge.exe"
+    } else {
+        "discord-audio-bridge"
+    };
     let mut candidates: Vec<PathBuf> = Vec::new();
     if let Ok(path) = env::var("BRIDGE_EXECUTABLE") {
         let path = PathBuf::from(path.trim());
@@ -320,11 +368,31 @@ fn spawn_bridge(app: &AppHandle) -> Result<Child, String> {
             candidates.push(path);
         }
     }
+    if let Some(bundled) = bundled_bridge_root(Some(app)) {
+        candidates.push(bundled.join(name));
+    }
+    let exe_dir = env::current_exe()
+        .ok()
+        .and_then(|p| p.parent().map(|d| d.to_path_buf()))
+        .ok_or("cannot locate this application's own directory")?;
     candidates.push(exe_dir.join("bridge").join(name));
     candidates.push(exe_dir.join(name));
     for candidate in &candidates {
         if candidate.is_file() {
-            let cwd = candidate.parent().unwrap_or(Path::new(".")).to_path_buf();
+            // Prefer the folder that actually has web/ assets. Falling back to the
+            // executable's parent covers BRIDGE_EXECUTABLE pointing at a portable layout.
+            let cwd = candidate
+                .parent()
+                .map(|dir| {
+                    if dir.join("web").join("index.html").is_file() {
+                        dir.to_path_buf()
+                    } else if let Some(bundled) = bundled_bridge_root(Some(app)) {
+                        bundled
+                    } else {
+                        dir.to_path_buf()
+                    }
+                })
+                .unwrap_or_else(|| PathBuf::from("."));
             return start_child(app, candidate, &[], &cwd);
         }
     }
@@ -384,10 +452,19 @@ fn start_child(app: &AppHandle, program: &Path, args: &[PathBuf], cwd: &Path) ->
         // Same writable root save_setup uses. Without this, a packaged bridge whose
         // install folder is writable treats that folder as runtimeRoot and never sees
         // the AppData .env the first-run form just wrote.
-        .env("BRIDGE_RUNTIME_ROOT", runtime_root())
+        .env("BRIDGE_RUNTIME_ROOT", runtime_root(Some(app)))
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
+
+    // Packaged and checkout layouts both keep web/ next to the process cwd. Setting this
+    // explicitly stops the bridge from walking into the wrong tree (e.g. /usr/bin) when the
+    // Linux shell lives apart from its resource dir.
+    if cwd.join("web").join("index.html").is_file() {
+        command.env("BRIDGE_PROJECT_ROOT", cwd);
+    } else if let Some(root) = find_project_root(Some(app)) {
+        command.env("BRIDGE_PROJECT_ROOT", root);
+    }
 
     // The Unix twin of the Windows kill-on-close job: the kernel signals the child when this
     // process dies, which covers SIGKILL and SIGTERM - exits that never reach our cleanup code.
@@ -468,7 +545,7 @@ pub fn supervise(app: AppHandle) {
         }
 
         // 1. A bridge that already answers wins: attaching never collides with npm start.
-        if let Some(endpoint) = probe_saved_endpoint(&agent(&app)) {
+        if let Some(endpoint) = probe_saved_endpoint(&app, &agent(&app)) {
             if run_attached(&app, endpoint) {
                 return;
             }
@@ -529,7 +606,7 @@ is CONTROL_PORT disabled, or is the port already taken?",
         // 4. No bridge anywhere. Before starting one, make sure a bot token exists:
         //    a bridge without credentials only leads to a confusing panel. The setup form
         //    is the whole first-run experience; nothing spawns until it is filled in.
-        if !has_saved_token() {
+        if !has_saved_token(&app) {
             set_phase(
                 &app,
                 Phase::SetupNeeded,
@@ -545,7 +622,7 @@ is CONTROL_PORT disabled, or is the port already taken?",
                 }
                 // A bridge may appear while the form is open (user ran npm start, say), or a
                 // token may land in an .env by hand - both should let the app move on.
-                if probe_saved_endpoint(&agent(&app)).is_some() || has_saved_token() {
+                if probe_saved_endpoint(&app, &agent(&app)).is_some() || has_saved_token(&app) {
                     break;
                 }
                 thread::sleep(Duration::from_millis(250));
@@ -663,7 +740,7 @@ fn wait_for_endpoint(app: &AppHandle, budget: Duration) -> WaitOutcome {
         if is_quitting(app) {
             return WaitOutcome::Timeout("app is quitting".into());
         }
-        if let Some(endpoint) = probe_saved_endpoint(&agent(app)) {
+        if let Some(endpoint) = probe_saved_endpoint(app, &agent(app)) {
             return WaitOutcome::Ready(endpoint);
         }
 

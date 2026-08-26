@@ -32,7 +32,7 @@ pub fn run() {
         ))
         .setup(|app| {
             app.manage(ShellState(std::sync::Mutex::new(state::Inner::new())));
-            let logs_dir = bridge::bridge_logs_dir();
+            let logs_dir = bridge::bridge_logs_dir(app.handle());
             {
                 let state = app.state::<ShellState>();
                 let mut inner = state.0.lock().unwrap();
@@ -169,7 +169,7 @@ fn shell_open_panel(app: AppHandle) -> Result<(), String> {
 /// load it, then wake the supervisor so it starts the bridge right away.
 #[tauri::command]
 fn shell_save_setup(app: AppHandle, token: String, appId: Option<String>) -> Result<(), String> {
-    bridge::save_setup(&token, appId.as_deref())?;
+    bridge::save_setup(&app, &token, appId.as_deref())?;
     {
         let state = app.state::<ShellState>();
         let mut inner = state.0.lock().unwrap();

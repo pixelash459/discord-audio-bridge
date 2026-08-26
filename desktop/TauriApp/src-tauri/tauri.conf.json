@@ -37,6 +37,9 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ],
+    "resources": {
+      "bridge-payload/": "bridge/"
+    },
     "windows": {
       "webviewInstallMode": {
         "type": "downloadBootstrapper"

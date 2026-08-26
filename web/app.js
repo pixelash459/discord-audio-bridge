@@ -273,7 +273,7 @@ document.addEventListener('keydown', (event) => {
 
 const SOURCE_HINTS = {
   process:
-    'Captures one application in isolation, at 48 kHz float. Nothing else on the PC leaks in and the app keeps playing to your speakers.',
+    'Captures one application in isolation, at 48 kHz float. Nothing else on the PC leaks in and the app keeps playing to your speakers. On Linux the app must be actively playing audio to appear here.',
   device: 'Captures everything playing through one output device.',
   dshow:
     'Captures a DirectShow input such as a virtual cable. Works without AudioTap, but whatever feeds the cable has already been through another app.',

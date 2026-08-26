@@ -11,6 +11,7 @@ import type { CaptureTap, DeviceInfo, ProcessInfo, RawFormat, TapOptions, TapSta
 
 const log = logger('pipewire');
 let availability: { value: boolean; expires: number } | undefined;
+let rawFlagSupport: { value: boolean; expires: number } | undefined;
 let nodeCache: { value: PwNode[]; expires: number } | undefined;
 let nodeDump: Promise<PwNode[]> | undefined;
 
@@ -44,6 +45,28 @@ export function pipewireAvailable(): boolean {
   });
   const value = !record.error && record.status === 0 && !dump.error;
   availability = { value, expires: Date.now() + 5_000 };
+  return value;
+}
+
+/**
+ * PipeWire 1.2+ accepts `-a`/`--raw` for raw PCM on stdout. Ubuntu 24.04 / Mint ship 1.0.x,
+ * where that flag does not exist and writing to `-` is already raw PCM when `--format` is set.
+ * Probe --help once so both generations keep working.
+ */
+export function pwRecordSupportsRawFlag(
+  helpText?: string,
+): boolean {
+  if (helpText !== undefined) {
+    return /(?:^|\s)(?:-a|--raw)\b/.test(helpText);
+  }
+  if (rawFlagSupport && rawFlagSupport.expires > Date.now()) return rawFlagSupport.value;
+  const help = spawnSync(config.paths.pwRecord, ['--help'], {
+    encoding: 'utf8',
+    windowsHide: true,
+  });
+  const text = `${help.stdout ?? ''}\n${help.stderr ?? ''}`;
+  const value = !help.error && /(?:^|\s)(?:-a|--raw)\b/.test(text);
+  rawFlagSupport = { value, expires: Date.now() + 60_000 };
   return value;
 }
 
@@ -308,8 +331,10 @@ export class PipedTap implements CaptureTap {
       : await targetForApp(options.nodeId!);
 
     const bufferMs = options.bufferMs ?? config.capture.bufferMs;
+    // Prefer --raw on PipeWire 1.2+; omit it on 1.0.x (Ubuntu 24.04/Mint) where the flag is
+    // unrecognized and stdout "-" is already raw PCM once --format/--rate/--channels are set.
     const args = [
-      '--raw',
+      ...(pwRecordSupportsRawFlag() ? ['--raw'] : []),
       '--format', 'f32',
       '--rate', String(DISCORD_AUDIO.sampleRate),
       '--channels', String(DISCORD_AUDIO.channels),

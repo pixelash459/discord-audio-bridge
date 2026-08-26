@@ -12,7 +12,7 @@ Per-app capture is a native-API problem, so each platform uses its native answer
 | | Windows | Linux |
 | --- | --- | --- |
 | API | WASAPI process loopback (`AUDIOCLIENT_PROCESS_LOOPBACK_PARAMS`) | PipeWire stream nodes |
-| Helper | `AudioTap.exe` (C#) | `pw-record --raw --target <node> -` (stock PipeWire tool) |
+| Helper | `AudioTap.exe` (C#) | `pw-record --target <node> -` (stock PipeWire tool; `--raw` when the installed PipeWire supports it) |
 | Capture format | 48 kHz f32le, exactly as requested | 48 kHz f32le, exactly as requested |
 | Pacing, silence fill, drift trim | `PacedWriter.cs` inside AudioTap | `src/audio/pacer.ts` in the bot |
 | Metering | reported by AudioTap 5×/s | computed in the pacer (every sample passes through) |
@@ -20,11 +20,11 @@ Per-app capture is a native-API problem, so each platform uses its native answer
 | Enumeration | one resident `AudioTap --monitor --with-icons` event feed | coalesced `pw-dump` queries (stream nodes and sinks) |
 
 PipeWire exposes every application's playback stream as its own node, which is why Linux needs
-no custom capture binary at all: `pw-record --raw --rate 48000 --channels 2 --format f32 --target
-<node> -` writes exactly the float PCM we want to stdout. What it does *not* do is pace: PipeWire
-delivers bursts while the target renders and nothing at all while it is idle — the same stall
-that kills unpaced streams on Windows. The pacer closes that gap, and because every sample passes
-through it, metering rides along for free.
+no custom capture binary at all: `pw-record --rate 48000 --channels 2 --format f32 --target
+<node> -` (plus `--raw` on PipeWire 1.2+) writes exactly the float PCM we want to stdout. What it
+does *not* do is pace: PipeWire delivers bursts while the target renders and nothing at all while
+it is idle — the same stall that kills unpaced streams on Windows. The pacer closes that gap, and
+because every sample passes through it, metering rides along for free.
 
 One safety property worth writing down: device capture must never fall back to a bare
 `pw-record`. Without `--target`, pw-record records the default **source** — the microphone. The

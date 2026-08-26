@@ -3,21 +3,20 @@ import { isIP } from 'node:net';
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { parseEnv } from 'node:util';
 
-import { IS_LINUX, isWritable, userStateDir } from './platform.ts';
+import { isWritable, userStateDir } from './platform.ts';
 
 /**
  * Where the project's files (web/, remote/, AudioTap) live.
  *
  * An explicit override (used by packages that separate the binary from its assets) is authoritative.
- * Without one, the running script/executable, standard Linux install root, and working directory
- * are searched upward for web/index.html. No import.meta here: the release build is a CommonJS
- * bundle, where it does not survive.
+ * Without one, the running script/executable and working directory are searched upward for
+ * web/index.html. No import.meta here: the release build is a CommonJS bundle, where it does not
+ * survive.
  */
 export function findProjectRoot(
   argv: readonly string[] = process.argv,
   environment: NodeJS.ProcessEnv = process.env,
   currentDirectory = process.cwd(),
-  linux = IS_LINUX,
 ): string {
   const argIndex = argv.indexOf('--project-root');
   const cliOverride = argIndex >= 0 ? argv[argIndex + 1]?.trim() ?? '' : '';
@@ -28,11 +27,7 @@ export function findProjectRoot(
   // a packaging problem into an unhelpful plain "Not found" page.
   if (override) return resolve(override);
 
-  const starts = [
-    dirname(argv[1] ?? process.execPath),
-    ...(linux ? ['/usr/share/discord-audio-bridge'] : []),
-    currentDirectory,
-  ];
+  const starts = [dirname(argv[1] ?? process.execPath), currentDirectory];
   for (const start of starts) {
     if (!start) continue;
     let dir = resolve(start);
@@ -50,7 +45,7 @@ export const projectRoot = findProjectRoot();
 
 /**
  * Writable root for runtime state. Same as projectRoot in a checkout; a per-user state directory
- * when the install root is read-only (packaged installs under /usr/share or Program Files).
+ * when the install root is read-only (packaged installs under Program Files).
  */
 export const runtimeRoot = process.env['BRIDGE_RUNTIME_ROOT']?.trim()
   ? resolve(process.env['BRIDGE_RUNTIME_ROOT'])
@@ -70,10 +65,10 @@ function loadEnvFiles(paths: string[]): void {
   }
 }
 
-// A system-wide file for packaged installs, then the checkout's own .env. The checkout wins for
-// keys present in both, and real environment variables beat everything.
+// Checkout .env, then the writable runtime .env for packaged installs. The checkout wins for keys
+// present in both when both exist only if listed last — runtime is listed last so packaged
+// AppData settings override a read-only install tree. Real environment variables beat everything.
 loadEnvFiles([
-  ...(IS_LINUX ? ['/etc/discord-audio-bridge/env'] : []),
   join(projectRoot, '.env'),
   ...(runtimeRoot !== projectRoot ? [join(runtimeRoot, '.env')] : []),
 ]);
@@ -273,9 +268,6 @@ export const config = {
   paths: {
     ffmpeg: safePath('FFMPEG_PATH', 'ffmpeg'),
     audioTap: safePath('AUDIOTAP_PATH', defaultAudioTapPath()),
-    /** PipeWire CLI tools used as the Linux capture helper. */
-    pwRecord: safePath('PWRECORD_PATH', 'pw-record'),
-    pwDump: safePath('PWDUMP_PATH', 'pw-dump'),
     /** Player used for local monitoring. Ships with a full ffmpeg build. */
     ffplay: safePath('FFPLAY_PATH', 'ffplay'),
     /** Persistent UTF-8 JSON-lines log. Set LOG_FILE=off to keep logs in memory/console only. */

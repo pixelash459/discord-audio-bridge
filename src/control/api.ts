@@ -7,7 +7,6 @@ import { logger } from '../logger.ts';
 import { collectReport, renderReport } from '../diagnostics.ts';
 import { listDshowDevices } from '../audio/encoder.ts';
 import { nowPlaying, nowPlayingSummary, sourceMonitor, type NowPlaying } from '../audio/monitor.ts';
-import { pipewireDiscoveryError } from '../audio/pipewire.ts';
 import { captureBackend, isAudioTapBuilt, listDevices, listProcesses } from '../audio/tap.ts';
 import {
   deletePreset,
@@ -91,7 +90,7 @@ export interface Snapshot {
   sessions: SessionStatus[];
   capabilities: {
     platform: NodeJS.Platform;
-    /** 'wasapi' on Windows, 'pipewire' on Linux, null when no per-app backend is usable. */
+    /** 'wasapi' when AudioTap is available, otherwise null. */
     captureBackend: string | null;
     audioTapBuilt: boolean;
     audioTapPath: string;
@@ -300,7 +299,7 @@ function runScript(script: string): Promise<{ ok: boolean; output: string }> {
   return new Promise((done) => {
     const started = performance.now();
     if (script === 'build:native' && !IS_WINDOWS) {
-      done({ ok: false, output: 'Building AudioTap is Windows-only. On Linux, install pipewire-bin (Debian/Ubuntu) or pipewire-utils (Fedora) instead.' });
+      done({ ok: false, output: 'Building AudioTap is Windows-only.' });
       return;
     }
     log.info(`starting npm script: ${script}`);
@@ -370,9 +369,7 @@ async function startFromRequest(client: Client, input: StreamRequest) {
   if (sources.some((source) => source.kind !== 'dshow') && !isAudioTapBuilt()) {
     throw new ApiError(
       409,
-      IS_WINDOWS
-        ? 'AudioTap is not built, so only DirectShow sources work. Build it from the Setup tab.'
-        : 'The PipeWire capture tools are missing, so nothing is capturable. Install pipewire-bin on Debian/Ubuntu or pipewire-utils on Fedora.',
+      'AudioTap is not built, so only DirectShow sources work. Build it from the Setup tab.',
     );
   }
 
@@ -440,14 +437,12 @@ export async function handleApi(client: Client, req: IncomingMessage, url: URL):
         isAudioTapBuilt()
           ? listProcesses().catch((error) => {
               log.warn('process source enumeration failed', error);
-              if (!IS_WINDOWS) sourceError = pipewireDiscoveryError(error);
               return [];
             })
           : Promise.resolve([]),
         isAudioTapBuilt()
           ? listDevices().catch((error) => {
               log.warn('device source enumeration failed', error);
-              if (!IS_WINDOWS) sourceError = pipewireDiscoveryError(error);
               return [];
             })
           : Promise.resolve([]),

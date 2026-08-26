@@ -30,8 +30,6 @@ const modules = [
   '../src/audio/tap.ts',
   '../src/audio/monitor.ts',
   '../src/audio/mixer.ts',
-  '../src/audio/pacer.ts',
-  '../src/audio/pipewire.ts',
   '../src/audio/encoder.ts',
   '../src/voice/session.ts',
   '../src/control/server.ts',
@@ -117,6 +115,8 @@ for (const specifier of modules) {
 
 // Capture inputs cross a process boundary. Reject unknown discriminants and non-finite controls
 // instead of letting them fall through to a default device or poison float samples with NaN.
+// pw-dump / PipeWire capture paths were removed; this build is Windows-only.
+
 {
   const { finiteNumber, validateSource } = await import(
     new URL('../src/validation.ts', import.meta.url).href
@@ -133,85 +133,7 @@ for (const specifier of modules) {
   }
 }
 
-// pw-dump outputs the complete graph. Its positional argument is a remote instance name, not an
-// object type, so passing "Node" makes Linux enumeration connect to a nonexistent remote. Parse a
-// representative full graph and filter the playback stream in-process.
-{
-  const { parsePipewireDump, pipewireAppsFromNodes } = await import(
-    new URL('../src/audio/pipewire.ts', import.meta.url).href
-  );
-  const graph = JSON.stringify([
-    {
-      id: 41,
-      type: 'PipeWire:Interface:Client',
-      info: { props: { 'application.name': 'Firefox' } },
-    },
-    {
-      id: 42,
-      type: 'PipeWire:Interface:Node',
-      info: {
-        state: 'running',
-        props: {
-          'media.class': 'Stream/Output/Audio',
-          'application.name': 'Firefox',
-          'node.name': 'Firefox-YouTube',
-          'node.description': 'YouTube Audio',
-        },
-      },
-    },
-    {
-      id: 43,
-      type: 'PipeWire:Interface:Node',
-      info: { props: { 'media.class': 'Audio/Sink', 'node.name': 'alsa_output.test' } },
-    },
-  ]);
-  const nodes = parsePipewireDump(graph);
-  const apps = pipewireAppsFromNodes(nodes);
-  if (nodes.length !== 2 || apps.length !== 1 || apps[0]?.name !== 'Firefox' || apps[0]?.state !== 'Active') {
-    failed++;
-    process.stdout.write('  FAIL  full PipeWire graph yields browser playback sources\n');
-  } else {
-    process.stdout.write('  ok    full PipeWire graph yields browser playback sources\n');
-  }
-}
-
-// A real-time producer must be allowed to build the configured jitter reserve. The old Linux
-// pacer consumed each 20 ms frame as soon as it arrived, so it never actually primed outside the
-// synthetic all-at-once burst used by the pacing test later in this file.
-{
-  const { PassThrough } = await import('node:stream');
-  const { Pacer } = await import(new URL('../src/audio/pacer.ts', import.meta.url).href);
-  const source = new PassThrough();
-  const pacer = new Pacer(source, { sampleRate: 48_000, channels: 2, targetMs: 100 });
-  const frame = new Float32Array(48_000 * 2 * 0.02).fill(0.25);
-  let outputBytes = 0;
-  let firstAudibleMs = Infinity;
-  pacer.stream.on('data', (chunk) => {
-    if (firstAudibleMs === Infinity) {
-      const samples = new Float32Array(chunk.buffer, chunk.byteOffset, chunk.length / 4);
-      if (samples.some((sample) => sample !== 0)) {
-        firstAudibleMs = (outputBytes / (48_000 * 2 * 4)) * 1000;
-      }
-    }
-    outputBytes += chunk.length;
-  });
-  const feeder = setInterval(() => source.write(Buffer.from(frame.buffer)), 20);
-  await new Promise((resolve) => setTimeout(resolve, 620));
-  clearInterval(feeder);
-  await pacer.close();
-
-  if (firstAudibleMs < 80) {
-    failed++;
-    process.stdout.write(
-      `  FAIL  pacer jitter priming (first audio ${firstAudibleMs.toFixed(0)}ms)\n`,
-    );
-  } else {
-    process.stdout.write(`  ok    pacer jitter priming (${firstAudibleMs.toFixed(0)}ms reserve)\n`);
-  }
-}
-
 const tapSource = await readFile(new URL('../src/audio/tap.ts', import.meta.url), 'utf8');
-const pipewireSource = await readFile(new URL('../src/audio/pipewire.ts', import.meta.url), 'utf8');
 const configSource = await readFile(new URL('../src/config.ts', import.meta.url), 'utf8');
 const envSource = await readFile(new URL('../src/control/envFile.ts', import.meta.url), 'utf8');
 const apiSource = await readFile(new URL('../src/control/api.ts', import.meta.url), 'utf8');
@@ -220,18 +142,6 @@ const packageSource = await readFile(new URL('./package.mjs', import.meta.url), 
 const workflowSource = await readFile(new URL('../.github/workflows/ci.yml', import.meta.url), 'utf8');
 const controlUiSource = await readFile(new URL('../web/app.js', import.meta.url), 'utf8');
 const controlUiHtml = await readFile(new URL('../web/index.html', import.meta.url), 'utf8');
-
-if (
-  pipewireSource.includes("config.paths.pwDump, ['Node']") ||
-  pipewireSource.includes("config.paths.pwDump, ['--version']") ||
-  !pipewireSource.includes('config.paths.pwDump, []') ||
-  !pipewireSource.includes("config.paths.pwDump, ['--help']")
-) {
-  failed++;
-  process.stdout.write('  FAIL  PipeWire uses the portable pw-dump command contract\n');
-} else {
-  process.stdout.write('  ok    PipeWire uses the portable pw-dump command contract\n');
-}
 
 if (
   !controlUiHtml.includes('id="support-copy"') ||
@@ -248,58 +158,47 @@ if (
 } else {
   process.stdout.write('  ok    portable copyable support report contract\n');
 }
-const desktopSource = await readFile(
-  new URL('../packaging/io.github.ashutoshchaudhary_lgtm.discord-audio-bridge.desktop', import.meta.url),
-  'utf8',
-);
 const envExample = await readFile(new URL('../.env.example', import.meta.url), 'utf8');
 if (
-  /if \(children\.length === 0\) return;[\s\S]{0,800}closeAllPipedTaps/.test(tapSource) ||
   !configSource.includes('argIndex >= 0 ?') ||
-  !configSource.includes("'/usr/share/discord-audio-bridge'") ||
+  configSource.includes("'/usr/share/discord-audio-bridge'") ||
   !envSource.includes("join(runtimeRoot, '.env')") ||
   apiSource.includes("runScript('register')") ||
-  !packageSource.includes('readdirSync(audioTapDir') ||
-  !packageSource.includes('`overrides:`') ||
-  !packageSource.includes("join(appDir, 'discord-audio-bridge.png')") ||
-  !packageSource.includes('BRIDGE_RUNTIME_ROOT=') ||
-  !packageSource.includes("process.env['APPIMAGE_RUNTIME_PATH']") ||
-  !workflowSource.includes('sha256sum --check --strict') ||
-  workflowSource.includes('AppImageKit/releases/download/continuous') ||
-  !packageSource.includes("'Exec=/usr/bin/discord-audio-bridge --open'") ||
-  !packageSource.includes('/usr/share/applications/io.github.ashutoshchaudhary_lgtm.discord-audio-bridge.desktop') ||
-  !packageSource.includes('/usr/share/metainfo/io.github.ashutoshchaudhary_lgtm.discord-audio-bridge.appdata.xml') ||
+  !packageSource.includes('readdirSync(packagedAudioTapDir') ||
+  packageSource.includes('packageLinux') ||
+  packageSource.includes('nfpm') ||
+  packageSource.includes('AppImage') ||
+  workflowSource.includes('linux-x64') ||
+  workflowSource.includes('ubuntu-24.04-arm') ||
   !controlServerSource.includes('mode: 0o600') ||
   !controlServerSource.includes('control panel assets are missing') ||
-  !desktopSource.includes('Exec=discord-audio-bridge --open') ||
-  !desktopSource.includes('Terminal=false')
+  envExample.includes('PWRECORD_PATH') ||
+  tapSource.includes('pipewire') ||
+  tapSource.includes('PipedTap')
 ) {
   failed++;
-  process.stdout.write('  FAIL  packaged runtime regression contracts\n');
+  process.stdout.write('  FAIL  Windows-only packaged runtime regression contracts\n');
 } else {
-  process.stdout.write('  ok    packaged runtime regression contracts\n');
+  process.stdout.write('  ok    Windows-only packaged runtime regression contracts\n');
 }
 
 const markdown = await Promise.all(
   [
     '../README.md',
-    '../CHANGELOG.md',
     '../CONTRIBUTING.md',
     '../CODE_OF_CONDUCT.md',
     '../SECURITY.md',
-    '../docs/cross-platform.md',
   ].map((path) => readFile(new URL(path, import.meta.url), 'utf8')),
 );
 const documentation = markdown.join('\n');
 if (
   /github\.com\/(?:OWNER|<owner>)/i.test(documentation) ||
-  /apt install pipewire-utils/i.test(documentation) ||
+  /pipewire-bin|pw-record|AppImage|\.deb\b|cross-platform\.md/i.test(documentation) ||
   documentation.includes('docs.discord.food') ||
   documentation.includes('npm run dist') ||
   /Microsoft\.DotNet\.SDK\.9|\.NET SDK 9|non-Stage voice/.test(documentation) ||
-  !documentation.includes('pipewire-bin') ||
-  !packageSource.includes('pipewire-bin | pipewire') ||
-  !envExample.includes('relative to the writable runtime root')
+  !envExample.includes('relative to the writable runtime root') ||
+  !documentation.includes('Windows')
 ) {
   failed++;
   process.stdout.write('  FAIL  documentation matches current platform contracts\n');
@@ -439,14 +338,11 @@ if (
   process.stdout.write('  ok    control UI surfaces module startup failures\n');
 }
 
-if (webApp.includes("if (state.capabilities?.platform === 'linux')")) {
+if (webApp.includes("platform === 'linux'") || webApp.includes('PipeWire') || webApp.includes('pipewire-bin')) {
   failed++;
-  process.stdout.write('  FAIL  source renderer uses snapshot state safely\n');
-} else if (!webApp.includes("ui.state?.capabilities?.platform === 'linux'")) {
-  failed++;
-  process.stdout.write('  FAIL  source renderer uses snapshot state safely\n');
+  process.stdout.write('  FAIL  control UI has no Linux/PipeWire paths\n');
 } else {
-  process.stdout.write('  ok    source renderer uses snapshot state safely\n');
+  process.stdout.write('  ok    control UI has no Linux/PipeWire paths\n');
 }
 
 // Check the behaviour, not its formatting: the guard may load more than the guild list.
@@ -557,22 +453,12 @@ if (
   process.stdout.write('  ok    panel reports a stale server build\n');
 }
 
-// pw-record proves capture; pw-dump is what enumerates sources, and it is the half that fails
-// when the bridge cannot reach the desktop session.
-if (!diagnosticsSource.includes("id: 'pipewire-dump'")) {
+// AudioTap is the only per-app capture helper; diagnostics must not mention PipeWire.
+if (diagnosticsSource.includes('pipewire') || diagnosticsSource.includes('pw-record')) {
   failed++;
-  process.stdout.write('  FAIL  diagnostics probe pw-dump, not just pw-record\n');
+  process.stdout.write('  FAIL  diagnostics are Windows-only (no PipeWire)\n');
 } else {
-  process.stdout.write('  ok    diagnostics probe pw-dump, not just pw-record\n');
-}
-
-// The capture gate must not hinge on pw-dump's --help exit status: a version that returns
-// non-zero there would silently empty the entire source list.
-if (/dump\.status === 0/.test(pipewireSource)) {
-  failed++;
-  process.stdout.write('  FAIL  pipewire gate tolerates pw-dump --help exit status\n');
-} else {
-  process.stdout.write('  ok    pipewire gate tolerates pw-dump --help exit status\n');
+  process.stdout.write('  ok    diagnostics are Windows-only (no PipeWire)\n');
 }
 
 // A bot token already identifies its application; requiring the id separately only adds a way to
@@ -714,69 +600,6 @@ if (filterIndex === -1 || !integerPipeArgs[filterIndex + 1]?.includes('volume=6d
   process.stdout.write('  FAIL  integer PCM gain fallback\n');
 } else {
   process.stdout.write('  ok    integer PCM gain fallback\n');
-}
-
-// The Linux capture helper is pw-record paced by the Pacer. Pacing is the property the whole
-// stream's survival rests on, so exercise it for real: feed one burst of sine, let the pacer run
-// dry, and check it kept emitting real-time audio (silence fill) with honest metering.
-{
-  const { PassThrough } = await import('node:stream');
-  const { Pacer } = await import(new URL('../src/audio/pacer.ts', import.meta.url).href);
-
-  const sampleRate = 48_000;
-  const source = new PassThrough();
-  const pacer = new Pacer(source, { sampleRate, channels: 2, targetMs: 60 });
-
-  let bytes = 0;
-  pacer.stream.on('data', (chunk) => (bytes += chunk.length));
-
-  // Stats describe the most recent interval, so the sine's window must be observed live rather
-  // than read from the final snapshot (which correctly reports the silence that followed).
-  let peakSeen = -Infinity;
-  const peakSampler = setInterval(() => {
-    const peak = pacer.stats.peakDb[0];
-    if (peak !== undefined && peak > peakSeen) peakSeen = peak;
-  }, 50);
-
-  // 300 ms of a 440 Hz sine at half-scale: peak must land at -6 dBFS in the stats.
-  const samples = new Float32Array((sampleRate * 2 * 300) / 1000);
-  for (let i = 0; i < samples.length; i += 2) {
-    const value = 0.5 * Math.sin((2 * Math.PI * 440 * i / 2) / sampleRate);
-    samples[i] = value;
-    samples[i + 1] = value;
-  }
-  source.write(Buffer.from(samples.buffer));
-
-  const started = performance.now();
-  await new Promise((resolve) => setTimeout(resolve, 1_100));
-  const elapsedMs = performance.now() - started;
-
-  const stats = pacer.stats;
-  const outputMs = (bytes / (sampleRate * 2 * 4)) * 1000;
-  clearInterval(peakSampler);
-  await pacer.close();
-
-  const pacingError = Math.abs(outputMs - elapsedMs);
-  if (pacingError > 150) {
-    failed++;
-    process.stdout.write(`  FAIL  pacer real-time pacing (emitted ${outputMs.toFixed(0)}ms in ${elapsedMs.toFixed(0)}ms)\n`);
-  } else {
-    process.stdout.write(`  ok    pacer real-time pacing (${pacingError.toFixed(0)}ms error over ~1.1s)\n`);
-  }
-
-  if (stats.paddedMs < 500) {
-    failed++;
-    process.stdout.write(`  FAIL  pacer silence fill (padded ${stats.paddedMs.toFixed(0)}ms after the burst)\n`);
-  } else {
-    process.stdout.write(`  ok    pacer silence fill (${stats.paddedMs.toFixed(0)}ms)\n`);
-  }
-
-  if (peakSeen < -8 || peakSeen > -4) {
-    failed++;
-    process.stdout.write(`  FAIL  pacer metering (peak ${peakSeen.toFixed(1)} dBFS, expected ~-6 for a half-scale sine)\n`);
-  } else {
-    process.stdout.write(`  ok    pacer metering (peak ${peakSeen.toFixed(1)} dBFS)\n`);
-  }
 }
 
 process.stdout.write(failed === 0 ? '\nsmoke test passed\n' : `\n${failed} check(s) failed\n`);

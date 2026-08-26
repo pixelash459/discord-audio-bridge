@@ -502,7 +502,7 @@ export class BridgeSession {
 
     if (primary.kind === 'dshow') {
       if (!IS_WINDOWS) {
-        throw new Error('DirectShow sources are Windows-only. On Linux, capture an app or a device.');
+        throw new Error('DirectShow sources are Windows-only.');
       }
       const probed = await probeDshowFormat(primary.name);
       input = { kind: 'dshow', name: primary.name, format: probed ?? undefined };

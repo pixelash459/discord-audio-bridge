@@ -1,15 +1,14 @@
-# TauriApp — cross-platform desktop shell
+# TauriApp — Windows desktop shell
 
 A native desktop shell for the bridge: a real app window, a tray icon that knows what the bridge
-is doing, global mute/stop hotkeys, and single-instance launch — on Windows **and** Linux — while
-the entire control surface remains the bridge's own web panel, served from its authenticated
-loopback server. This is the cross-platform sibling of the Windows-only WinForms shell in
-`desktop/BridgeApp`, built with Tauri 2 so it reuses the system webview (WebView2 on Windows,
-WebKitGTK on Linux) instead of bundling Chromium.
+is doing, global mute/stop hotkeys, and single-instance launch — while the entire control surface
+remains the bridge's own web panel, served from its authenticated loopback server. This is the
+Tauri sibling of the WinForms shell in `desktop/BridgeApp`, built with Tauri 2 so it reuses
+WebView2 instead of bundling Chromium.
 
 ```text
 ┌─────────────────────────────────────────────┐
-│ Discord Audio Bridge           — □ ✕        │  Tauri window (system webview)
+│ Discord Audio Bridge           — □ ✕        │  Tauri window (WebView2)
 │                                             │
 │   ┌─────────────────────────────────────┐   │
 │   │  🎧 bridge control panel            │   │  the same page the bot serves on
@@ -26,9 +25,8 @@ WebKitGTK on Linux) instead of bundling Chromium.
 - **Attach or launch.** On start it looks for a bridge that already answers — so `npm start` in a
   terminal and the app share one session — and only when nothing answers does it spawn one. From
   this checkout it finds the bridge automatically (the same `web/index.html` walk-up the bot
-  itself uses). Release installers (Windows MSI, Linux deb/rpm/AppImage) bundle the bridge inside
-  the app under a `bridge/` resource folder. Elsewhere, point `BRIDGE_PROJECT_ROOT` at a checkout
-  or set `BRIDGE_EXECUTABLE`.
+  itself uses). Release installers (MSI/NSIS) bundle the bridge inside the app under a `bridge/`
+  resource folder. Elsewhere, point `BRIDGE_PROJECT_ROOT` at a checkout or set `BRIDGE_EXECUTABLE`.
 - **Loader screen.** A small status page shows what the shell is doing; when the bridge's panel
   answers, the window navigates to it with the access token in a URL fragment, exactly like the
   browser flow.
@@ -39,34 +37,23 @@ WebKitGTK on Linux) instead of bundling Chromium.
   same combinations the WinForms shell uses.
 - **Single instance.** A second launch raises the existing window instead of fighting over the
   bridge's control port.
-- **Never orphans the bridge.** On Windows the child sits in a kill-on-close job object, so a
-  crashed shell cannot leave a stray bot holding the voice connection.
+- **Never orphans the bridge.** The child sits in a kill-on-close job object, so a crashed shell
+  cannot leave a stray bot holding the voice connection.
 
 ## Prerequisites
 
-| | Windows | Linux |
-| --- | --- | --- |
-| Rust 1.77.2+ ([rustup](https://rustup.rs)) | required (MSVC toolchain) | required |
-| WebView2 | ships with Windows 10/11 (bundlers can bootstrap it if missing) | — |
-| WebKitGTK 4.1 + tray libs | — | `libwebkit2gtk-4.1-dev libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev` |
-| Node 22.18+ | to run the bridge from this checkout | same |
+| | |
+| --- | --- |
+| Rust 1.77.2+ ([rustup](https://rustup.rs)) | MSVC toolchain |
+| WebView2 | ships with Windows 10/11 (bundlers can bootstrap it if missing) |
+| Node 22.18+ | to run the bridge from this checkout |
 
 ## Development
 
-From a checkout of this repository:
-
 ```powershell
-# Windows
 cd desktop\TauriApp
 npm install
 npm run dev        # finds the bridge in the repo root automatically
-```
-
-```bash
-# Linux
-cd desktop/TauriApp
-npm install
-npm run dev
 ```
 
 The supervisor walks up from the running executable to find a directory containing
@@ -76,9 +63,8 @@ one. Runtime state (`.control-token`, logs) resolves exactly like the bridge's o
 `runtimeRoot()`.
 
 Release builds stage the portable bridge layout into `src-tauri/bridge-payload/` (via
-`scripts/package.mjs`) and Tauri embeds it as the `bridge/` resource. Linux packages resolve
-that folder through Tauri's resource directory (not `/usr/bin`), and the shell sets
-`BRIDGE_PROJECT_ROOT` so the control panel's `web/` assets load.
+`scripts/package.mjs`) and Tauri embeds it as the `bridge/` resource.
+
 ## Layout
 
 ```text
@@ -88,8 +74,8 @@ src-tauri/
   src/bridge.rs     Attach-or-spawn supervision, /api/state polling, tray actions
   src/tray.rs       Tray icon, menu, live tooltip
   src/hotkeys.rs    Ctrl+Alt+M / S / B
-  src/winjob.rs     Windows kill-on-close job object
-icons/gen-icon.mjs  Regenerates the icon deterministically (same drawing as packaging/)
+  src/winjob.rs     Kill-on-close job object
+icons/gen-icon.mjs  Regenerates the icon deterministically
 ```
 
 ## Security posture
@@ -101,7 +87,6 @@ remains the bridge's separate, restricted dashboard on port 8788.
 
 ## CI
 
-`.github/workflows/app-shell.yml` builds Windows, Ubuntu 22.04 (low glibc baseline), and native
-Linux arm64 bundles on pushes to this branch and pull requests touching this folder. Every
-platform stages the bridge payload before `tauri build`, so the uploaded MSI/deb/rpm/AppImage
-installers are self-contained.
+`.github/workflows/app-shell.yml` builds Windows MSI/NSIS bundles on pushes to this branch and
+pull requests touching this folder. App-shell CI is Windows-only. Every build stages the bridge
+payload before `tauri build`, so the uploaded installers are self-contained.

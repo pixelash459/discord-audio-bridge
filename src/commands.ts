@@ -379,13 +379,11 @@ const stream: Command = {
     if (sub === 'app' || sub === 'device') {
       if (!isAudioTapBuilt()) {
         throw new UserError(
-          IS_WINDOWS
-            ? 'Per-app capture needs the AudioTap helper. Run `npm run build:native` on the host (requires the .NET SDK), or use `/stream dshow` with a virtual cable instead.'
-            : 'Per-app capture needs the PipeWire tools (pw-record). On Debian/Ubuntu run `apt install pipewire-bin`; on Fedora run `dnf install pipewire-utils`.',
+          'Per-app capture needs the AudioTap helper. Run `npm run build:native` on the host (requires the .NET SDK), or use `/stream dshow` with a virtual cable instead.',
         );
       }
     } else if (!IS_WINDOWS) {
-      throw new UserError('DirectShow capture is Windows-only. On this host, use `/stream app` or `/stream device`.');
+      throw new UserError('DirectShow capture is Windows-only.');
     }
 
     // No target given: show a menu of what is actually playing rather than making the caller
@@ -630,9 +628,7 @@ const sources: Command = {
           .join('\n') ||
         (isAudioTapBuilt()
           ? '_none right now — start playback and try again_'
-          : IS_WINDOWS
-            ? '_unavailable — AudioTap is not built_'
-            : '_unavailable — the PipeWire tools are missing_')
+          : '_unavailable — AudioTap is not built_')
       }`,
       `**Output devices**\n${
         devices

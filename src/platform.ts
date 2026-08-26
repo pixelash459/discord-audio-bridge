@@ -3,12 +3,8 @@ import { accessSync, constants } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 
-/**
- * The two desktop platforms this bridge supports. Everything else (including macOS, whose per-app
- * capture would need Core Audio Tap) is unsupported rather than silently broken.
- */
+/** This product targets Windows only. Other platforms are unsupported. */
 export const IS_WINDOWS = process.platform === 'win32';
-export const IS_LINUX = process.platform === 'linux';
 
 /**
  * Restrict a state file to the current Windows account.
@@ -41,9 +37,11 @@ export function restrictPrivateFile(path: string): boolean {
 
 /** Best-effort "open this URL in a browser"; never throws, because startup must not die on it. */
 export function openUrl(url: string): void {
-  const command = IS_WINDOWS
-    ? spawn('cmd', ['/c', 'start', '', url], { detached: true, stdio: 'ignore', windowsHide: true })
-    : spawn('xdg-open', [url], { detached: true, stdio: 'ignore' });
+  const command = spawn('cmd', ['/c', 'start', '', url], {
+    detached: true,
+    stdio: 'ignore',
+    windowsHide: true,
+  });
   command.once('error', () => undefined);
   command.unref();
 }
@@ -60,12 +58,10 @@ export function isWritable(dir: string): boolean {
 /**
  * Per-user directory for state the bot writes at runtime (tokens, logs, the packaged .env).
  *
- * A development checkout is writable, so state simply lives in the repo. A packaged install
- * (/usr/share on Linux, Program Files on Windows) is not, and quietly failing to write the
- * control-panel token there would break the panel — so packaged installs fall back here.
+ * A development checkout is writable, so state simply lives in the repo. A packaged install under
+ * Program Files is not, and quietly failing to write the control-panel token there would break the
+ * panel — so packaged installs fall back here.
  */
 export function userStateDir(): string {
-  if (IS_WINDOWS) return join(process.env['APPDATA'] ?? homedir(), 'discord-audio-bridge');
-  if (process.env['XDG_STATE_HOME']) return join(process.env['XDG_STATE_HOME'], 'discord-audio-bridge');
-  return join(homedir(), '.local', 'state', 'discord-audio-bridge');
+  return join(process.env['APPDATA'] ?? homedir(), 'discord-audio-bridge');
 }

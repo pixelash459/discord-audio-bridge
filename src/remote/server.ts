@@ -13,7 +13,6 @@ import {
 
 import { listDshowDevices } from '../audio/encoder.ts';
 import { nowPlaying, nowPlayingSummary } from '../audio/monitor.ts';
-import { pipewireDiscoveryError } from '../audio/pipewire.ts';
 import { isAudioTapBuilt, listDevices, listProcesses } from '../audio/tap.ts';
 import { config, projectRoot, runtimeRoot } from '../config.ts';
 import { logger } from '../logger.ts';
@@ -39,7 +38,7 @@ import {
 
 const log = logger('remote');
 const webRoot = resolve(projectRoot, 'remote');
-// Runtime root rather than project root: packaged installs cannot write into /usr/share.
+// Runtime root rather than project root: packaged installs cannot write into Program Files.
 const tokenPath = join(runtimeRoot, '.remote-token');
 
 const MIME: Record<string, string> = {
@@ -129,14 +128,12 @@ async function remoteOptions(client: Client): Promise<unknown> {
     isAudioTapBuilt()
       ? listProcesses().catch((error) => {
           log.warn('remote process source enumeration failed', error);
-          if (!IS_WINDOWS) sourceError = pipewireDiscoveryError(error);
           return [];
         })
       : Promise.resolve([]),
     isAudioTapBuilt()
       ? listDevices().catch((error) => {
           log.warn('remote device source enumeration failed', error);
-          if (!IS_WINDOWS) sourceError = pipewireDiscoveryError(error);
           return [];
         })
       : Promise.resolve([]),
@@ -385,9 +382,7 @@ export class RemoteServer {
       if (sources.some((source) => source.kind !== 'dshow') && !isAudioTapBuilt()) {
         throw new RemoteApiError(
           409,
-          IS_WINDOWS
-            ? 'AudioTap is not built, so only cable sources are available.'
-            : 'The PipeWire capture tools are missing on the host, so nothing is capturable.',
+          'AudioTap is not built, so only cable sources are available.',
         );
       }
       if (input.bitrate !== undefined) {

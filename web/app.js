@@ -273,7 +273,7 @@ document.addEventListener('keydown', (event) => {
 
 const SOURCE_HINTS = {
   process:
-    'Captures one application in isolation, at 48 kHz float. Nothing else on the PC leaks in and the app keeps playing to your speakers. On Linux the app must be actively playing audio to appear here.',
+    'Captures one application in isolation, at 48 kHz float. Nothing else on the PC leaks in and the app keeps playing to your speakers.',
   device: 'Captures everything playing through one output device.',
   dshow:
     'Captures a DirectShow input such as a virtual cable. Works without AudioTap, but whatever feeds the cable has already been through another app.',
@@ -356,10 +356,6 @@ function availableItems() {
 function renderSources() {
   $('source-hint').textContent = SOURCE_HINTS[ui.sourceKind];
   $('tap-missing').hidden = ui.sources.audioTapBuilt || ui.sourceKind === 'dshow';
-  if (ui.state?.capabilities?.platform === 'linux') {
-    $('tap-missing-text').textContent =
-      'The PipeWire capture tools are missing, so per-app capture is unavailable. Install them on the host (for example, "apt install pipewire-bin"), then restart the bridge.';
-  }
 
   const mixable = ui.sourceKind !== 'dshow';
   $('mix-toggle').disabled = !mixable;
@@ -1203,7 +1199,7 @@ function renderWizard(state, stale = false) {
   }
   if (pane === 3 && state.capabilities.platform !== 'win32') {
     $('wizard-capture-text').textContent =
-      'Per-application capture uses the PipeWire tools. Install pipewire-bin (Debian/Ubuntu) or pipewire-utils (Fedora) on this machine, then restart the bridge.';
+      'This build is Windows-only. Per-application capture needs AudioTap on a Windows host.';
     $('wizard-build').hidden = true;
   }
 }

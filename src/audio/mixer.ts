@@ -49,11 +49,11 @@ interface Lane {
 /**
  * Sums several already-paced capture streams into one.
  *
- * Every input arrives at exactly real time - AudioTap's PacedWriter does that on Windows and the
- * Pacer does it on Linux - so this stage does not need a clock of its own to be correct, only to be
- * regular. It takes the same slice from every lane on each tick, sums in float, and treats a lane
- * with nothing to give as silence rather than stalling the whole mix behind it. That is the
- * behaviour that matters: pausing Spotify must not also mute the game.
+ * Every input arrives at exactly real time - AudioTap's PacedWriter does that - so this stage does
+ * not need a clock of its own to be correct, only to be regular. It takes the same slice from every
+ * lane on each tick, sums in float, and treats a lane with nothing to give as silence rather than
+ * stalling the whole mix behind it. That is the behaviour that matters: pausing Spotify must not
+ * also mute the game.
  *
  * Float summing can exceed unity when several loud sources coincide. Nothing is clamped here - the
  * true-peak limiter in the encoder is the right place for that, and clipping in float is recoverable

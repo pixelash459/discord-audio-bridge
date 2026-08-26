@@ -25,8 +25,7 @@ const MAX_START_ATTEMPTS: u32 = 3;
 
 /// Directory that contains the packaged bridge executable + web/ assets, when this shell
 /// was built with the bridge-payload resource bundle. On Windows that sits next to the
-/// app exe; on Linux deb/rpm/AppImage it lives under Tauri's resource dir
-/// (`/usr/lib/<exe>/bridge` or `$APPDIR/usr/lib/<exe>/bridge`).
+/// app exe (and under Tauri's resource dir when present).
 fn bundled_bridge_root(app: Option<&AppHandle>) -> Option<PathBuf> {
     let mut candidates: Vec<PathBuf> = Vec::new();
     if let Some(app) = app {
@@ -37,27 +36,6 @@ fn bundled_bridge_root(app: Option<&AppHandle>) -> Option<PathBuf> {
     if let Ok(exe) = env::current_exe() {
         if let Some(dir) = exe.parent() {
             candidates.push(dir.join("bridge"));
-            // Linux installers put resources under /usr/lib/<name>/, while the binary
-            // itself is in /usr/bin/. Tauri's resource_dir() uses the exe basename, but the
-            // deb/rpm bundler historically copies resources under productName - try both.
-            if cfg!(target_os = "linux") {
-                if let Some(name) = exe.file_name() {
-                    candidates.push(PathBuf::from("/usr/lib").join(name).join("bridge"));
-                }
-                candidates.push(PathBuf::from("/usr/lib/Discord Audio Bridge/bridge"));
-                candidates.push(PathBuf::from("/usr/lib/Discord Audio Bridge App/bridge"));
-                if let Ok(appdir) = env::var("APPDIR") {
-                    let appdir = appdir.trim();
-                    if !appdir.is_empty() {
-                        let appdir = PathBuf::from(appdir);
-                        if let Some(name) = exe.file_name() {
-                            candidates.push(appdir.join("usr/lib").join(name).join("bridge"));
-                        }
-                        candidates.push(appdir.join("usr/lib/Discord Audio Bridge/bridge"));
-                        candidates.push(appdir.join("usr/lib/Discord Audio Bridge App/bridge"));
-                    }
-                }
-            }
         }
     }
     candidates
@@ -84,9 +62,6 @@ fn find_project_root(app: Option<&AppHandle>) -> Option<PathBuf> {
     let mut starts = vec![exe_dir];
     if let Ok(cwd) = env::current_dir() {
         starts.push(cwd);
-    }
-    if cfg!(target_os = "linux") {
-        starts.push(PathBuf::from("/usr/share/discord-audio-bridge"));
     }
     for start in starts {
         let mut dir: Option<&Path> = Some(&start);
@@ -146,12 +121,9 @@ fn is_writable(dir: &Path) -> bool {
 }
 
 fn user_state_dir() -> PathBuf {
-    let base = if cfg!(target_os = "linux") {
-        dirs::state_dir().or_else(|| dirs::home_dir().map(|h| h.join(".local/state")))
-    } else {
-        dirs::data_dir().or_else(|| dirs::home_dir())
-    };
-    base.expect("no home or state directory to keep runtime files in")
+    dirs::data_dir()
+        .or_else(|| dirs::home_dir())
+        .expect("no home or data directory to keep runtime files in")
         .join("discord-audio-bridge")
 }
 
@@ -357,12 +329,8 @@ fn spawn_bridge(app: &AppHandle) -> Result<Child, String> {
     }
 
     // Packaged layout: the bridge executable sits in a bridge/ folder next to this app
-    // (Windows) or under Tauri's resource dir (Linux deb/rpm/AppImage).
-    let name = if cfg!(windows) {
-        "discord-audio-bridge.exe"
-    } else {
-        "discord-audio-bridge"
-    };
+    // (or under Tauri's resource dir when the installer embeds it there).
+    let name = "discord-audio-bridge.exe";
     let mut candidates: Vec<PathBuf> = Vec::new();
     if let Ok(path) = env::var("BRIDGE_EXECUTABLE") {
         let path = PathBuf::from(path.trim());
@@ -460,32 +428,14 @@ fn start_child(app: &AppHandle, program: &Path, args: &[PathBuf], cwd: &Path) ->
         .stderr(Stdio::piped());
 
     // Packaged and checkout layouts both keep web/ next to the process cwd. Setting this
-    // explicitly stops the bridge from walking into the wrong tree (e.g. /usr/bin) when the
-    // Linux shell lives apart from its resource dir.
+    // explicitly stops the bridge from walking into the wrong tree when the shell lives apart
+    // from its resource dir.
     if cwd.join("web").join("index.html").is_file() {
         command.env("BRIDGE_PROJECT_ROOT", cwd);
     } else if let Some(root) = find_project_root(Some(app)) {
         command.env("BRIDGE_PROJECT_ROOT", root);
     }
 
-    // The Unix twin of the Windows kill-on-close job: the kernel signals the child when this
-    // process dies, which covers SIGKILL and SIGTERM - exits that never reach our cleanup code.
-    #[cfg(unix)]
-    {
-        use std::os::unix::process::CommandExt;
-        unsafe {
-            command.pre_exec(|| {
-                if libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGTERM, 0, 0, 0) != 0 {
-                    return Err(std::io::Error::last_os_error());
-                }
-                // Close the fork race: if the parent died between fork and prctl, follow it now.
-                if libc::getppid() == 1 {
-                    libc::_exit(0);
-                }
-                Ok(())
-            });
-        }
-    }
     let mut child = command
         .spawn()
         .map_err(|e| format!("could not start {}: {e}", program.display()))?;

@@ -42,9 +42,7 @@ client.once(Events.ClientReady, (ready) => {
   log.info(
     backend === 'wasapi'
       ? 'per-app capture via WASAPI process loopback (AudioTap)'
-      : backend === 'pipewire'
-        ? 'per-app capture via PipeWire (pw-record + pacer)'
-        : 'no per-app capture backend available - only ffmpeg-input sources will work',
+      : 'no per-app capture backend available - only ffmpeg-input sources will work',
   );
 
   stopPresence = startPresence(client);

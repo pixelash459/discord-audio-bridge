@@ -6,15 +6,8 @@ import type { Readable } from 'node:stream';
 
 import { config, DISCORD_AUDIO } from '../config.ts';
 import { logger } from '../logger.ts';
-import { IS_LINUX, IS_WINDOWS } from '../platform.ts';
+import { IS_WINDOWS } from '../platform.ts';
 import { sourceMonitor } from './monitor.ts';
-import {
-  closeAllPipedTaps,
-  listPipewireApps,
-  listPipewireDevices,
-  pipewireAvailable,
-  PipedTap,
-} from './pipewire.ts';
 
 const log = logger('tap');
 const captureChildren = new Set<ChildProcessWithoutNullStreams>();
@@ -24,9 +17,8 @@ let deviceCache: { value: DeviceInfo[]; expires: number } | undefined;
 let deviceListing: Promise<DeviceInfo[]> | undefined;
 
 /**
- * A running capture, whichever side of the OS split produced it: AudioTap.exe on Windows,
- * pw-record plus the Pacer on Linux. Both deliver raw PCM on `stream`, in `format`, paced at
- * exactly real time with silence filled while the source is quiet.
+ * A running AudioTap.exe capture. Delivers raw PCM on `stream`, in `format`, paced at exactly real
+ * time with silence filled while the source is quiet.
  */
 export interface CaptureTap {
   readonly stream: Readable;
@@ -36,13 +28,12 @@ export interface CaptureTap {
   close(): Promise<void>;
 }
 
-export type CaptureBackend = 'wasapi' | 'pipewire';
+export type CaptureBackend = 'wasapi';
 
 /** Which per-app capture backend this host supports, or null when none is usable. */
 export function captureBackend(): CaptureBackend | null {
-  if (IS_WINDOWS) return existsSync(config.paths.audioTap) ? 'wasapi' : null;
-  if (IS_LINUX) return pipewireAvailable() ? 'pipewire' : null;
-  return null;
+  if (!IS_WINDOWS) return null;
+  return existsSync(config.paths.audioTap) ? 'wasapi' : null;
 }
 
 /** Historic name kept for the panels: "is the capture helper usable on this host". */
@@ -126,7 +117,7 @@ export class AudioTapUnavailableError extends Error {
   }
 }
 
-/** True only where the Windows helper binary actually exists; commands below are Windows-only. */
+/** True only where the Windows helper binary actually exists. */
 function audioTapPresent(): boolean {
   return IS_WINDOWS && existsSync(config.paths.audioTap);
 }
@@ -188,37 +179,25 @@ function run(args: string[], timeoutMs = 15_000): Promise<string> {
   });
 }
 
-export class PipeWireUnavailableError extends Error {
-  constructor() {
-    super(
-      'The PipeWire capture tools were not found. Install them ("apt install pipewire-bin" on ' +
-        'Debian/Ubuntu or "dnf install pipewire-utils" on Fedora), or point PWRECORD_PATH at pw-record.',
-    );
-    this.name = 'PipeWireUnavailableError';
-  }
-}
-
 /** Final shutdown backstop for any capture child that lost its owning session reference. */
 export async function closeAllTaps(): Promise<void> {
   sourceMonitor.stop();
   const children = [...captureChildren];
-  if (children.length > 0) {
-    log.warn('cleaning up remaining AudioTap processes', { count: children.length });
-    await Promise.all(
-      children.map(async (child) => {
-        try {
-          child.stdin.write('quit\n');
-          child.stdin.end();
-        } catch {
-          /* already exiting */
-        }
-        if (child.exitCode !== null) return;
-        await Promise.race([once(child, 'close'), new Promise((resolve) => setTimeout(resolve, 1_000))]);
-        if (child.exitCode === null) child.kill();
-      }),
-    );
-  }
-  await closeAllPipedTaps();
+  if (children.length === 0) return;
+  log.warn('cleaning up remaining AudioTap processes', { count: children.length });
+  await Promise.all(
+    children.map(async (child) => {
+      try {
+        child.stdin.write('quit\n');
+        child.stdin.end();
+      } catch {
+        /* already exiting */
+      }
+      if (child.exitCode !== null) return;
+      await Promise.race([once(child, 'close'), new Promise((resolve) => setTimeout(resolve, 1_000))]);
+      if (child.exitCode === null) child.kill();
+    }),
+  );
 }
 
 export async function listProcesses(): Promise<ProcessInfo[]> {
@@ -229,12 +208,12 @@ export async function listProcesses(): Promise<ProcessInfo[]> {
 
   if (processCache && processCache.expires > Date.now()) return processCache.value;
   if (processListing) return processListing;
-  processListing = (
-    IS_WINDOWS ? run(['--list-processes']).then((value) => JSON.parse(value) as ProcessInfo[]) : listPipewireApps()
-  ).then((value) => {
-    processCache = { value, expires: Date.now() + 2_000 };
-    return value;
-  });
+  processListing = run(['--list-processes'])
+    .then((value) => JSON.parse(value) as ProcessInfo[])
+    .then((value) => {
+      processCache = { value, expires: Date.now() + 2_000 };
+      return value;
+    });
   try {
     return await processListing;
   } finally {
@@ -248,12 +227,12 @@ export async function listDevices(): Promise<DeviceInfo[]> {
 
   if (deviceCache && deviceCache.expires > Date.now()) return deviceCache.value;
   if (deviceListing) return deviceListing;
-  deviceListing = (
-    IS_WINDOWS ? run(['--list-devices']).then((value) => JSON.parse(value) as DeviceInfo[]) : listPipewireDevices()
-  ).then((value) => {
-    deviceCache = { value, expires: Date.now() + 5_000 };
-    return value;
-  });
+  deviceListing = run(['--list-devices'])
+    .then((value) => JSON.parse(value) as DeviceInfo[])
+    .then((value) => {
+      deviceCache = { value, expires: Date.now() + 5_000 };
+      return value;
+    });
   try {
     return await deviceListing;
   } finally {
@@ -261,24 +240,12 @@ export async function listDevices(): Promise<DeviceInfo[]> {
   }
 }
 
-/**
- * Starts a capture through whichever backend this host provides. The options mean the same thing
- * on both platforms: `pid` is a Windows process id or a PipeWire node id, `deviceId` is an
- * endpoint id or a PipeWire sink name, and `exclude` (capture everything BUT one app) exists only
- * on Windows, where the process-loopback API offers it.
- */
+/** Starts a WASAPI process/device loopback capture via AudioTap. */
 export async function startCapture(options: TapOptions): Promise<CaptureTap> {
-  if (IS_WINDOWS) return Tap.start(options);
-  if (IS_LINUX) {
-    if (!pipewireAvailable()) throw new PipeWireUnavailableError();
-    if (options.exclude) {
-      throw new Error(
-        'Inverted capture (everything except one app) is Windows-only. PipeWire apps are captured individually.',
-      );
-    }
-    return PipedTap.start({ nodeId: options.pid, deviceId: options.deviceId, ...options });
+  if (!IS_WINDOWS) {
+    throw new Error(`Per-app capture is not supported on ${process.platform}. This build is Windows-only.`);
   }
-  throw new Error(`Per-app capture is not supported on ${process.platform}.`);
+  return Tap.start(options);
 }
 
 export interface TapOptions {

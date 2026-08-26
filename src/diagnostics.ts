@@ -3,8 +3,6 @@ import { generateDependencyReport } from '@discordjs/voice';
 
 import { captureBackend } from './audio/tap.ts';
 import { config } from './config.ts';
-import { IS_WINDOWS } from './platform.ts';
-import { parsePipewireDump } from './audio/pipewire.ts';
 
 export type CheckStatus = 'ok' | 'warn' | 'fail';
 
@@ -68,9 +66,7 @@ export function collectChecks(): Check[] {
           label: 'ffmpeg',
           status: 'fail',
           detail: `not found at "${config.paths.ffmpeg}"`,
-          remedy: IS_WINDOWS
-            ? 'Install it with: winget install Gyan.FFmpeg, then restart the bridge.'
-            : 'Install the ffmpeg package for your distribution, then restart the bridge.',
+          remedy: 'Install it with: winget install Gyan.FFmpeg, then restart the bridge.',
           action: 'open:https://ffmpeg.org/download.html',
         },
   );
@@ -105,96 +101,42 @@ export function collectChecks(): Check[] {
   }
 
   const backend = captureBackend();
-  if (IS_WINDOWS) {
-    checks.push(
-      backend === 'wasapi'
-        ? { id: 'audiotap', label: 'AudioTap', status: 'ok', detail: config.paths.audioTap }
-        : {
-            id: 'audiotap',
-            label: 'AudioTap',
-            status: 'warn',
-            detail: `not built (expected ${config.paths.audioTap})`,
-            remedy: 'Per-app capture needs it. Cable sources still work without it.',
-            action: '/api/setup/build-native',
-          },
-    );
+  checks.push(
+    backend === 'wasapi'
+      ? { id: 'audiotap', label: 'AudioTap', status: 'ok', detail: config.paths.audioTap }
+      : {
+          id: 'audiotap',
+          label: 'AudioTap',
+          status: 'warn',
+          detail: `not built (expected ${config.paths.audioTap})`,
+          remedy: 'Per-app capture needs it. Cable sources still work without it.',
+          action: '/api/setup/build-native',
+        },
+  );
 
-    const dotnet = probe('dotnet', ['--version']);
-    const major = Number.parseInt(dotnet.firstLine.split('.')[0] ?? '', 10);
-    const bundled = backend === 'wasapi';
-    checks.push(
-      dotnet.ok && major >= 10
-        ? { id: 'dotnet', label: '.NET SDK', status: 'ok', detail: dotnet.firstLine }
-        : {
-            id: 'dotnet',
-            label: '.NET SDK',
-            status: bundled ? 'ok' : 'warn',
-            detail: bundled
-              ? `${dotnet.ok ? dotnet.firstLine : 'not installed'} (optional; AudioTap is already built)`
-              : dotnet.ok
-                ? `${dotnet.firstLine} - too old to build AudioTap`
-                : 'not installed',
-            ...(bundled
-              ? {}
-              : {
-                  remedy: 'Needed only to build AudioTap: winget install Microsoft.DotNet.SDK.10',
-                  action: 'open:https://dotnet.microsoft.com/download',
-                }),
-          },
-    );
-  } else {
-    const pw = probe(config.paths.pwRecord, ['--version']);
-    checks.push(
-      pw.ok
-        ? { id: 'pipewire', label: 'pw-record', status: 'ok', detail: pw.firstLine || 'available' }
-        : {
-            id: 'pipewire',
-            label: 'pw-record',
-            status: 'warn',
-            detail: `not found at "${config.paths.pwRecord}"`,
-            remedy: 'apt install pipewire-bin (Debian/Ubuntu) or dnf install pipewire-utils (Fedora).',
-          },
-    );
-
-    // pw-record proves the capture half; pw-dump is what actually enumerates sources, and it is
-    // the half that fails when the bridge cannot reach the desktop audio session. Probing only
-    // pw-record made an empty Applications list look like a healthy install.
-    const dump = probe(config.paths.pwDump, []);
-    if (!dump.ok) {
-      checks.push({
-        id: 'pipewire-dump',
-        label: 'PipeWire graph',
-        status: 'fail',
-        detail: dump.firstLine || `pw-dump failed at "${config.paths.pwDump}"`,
-        remedy:
-          'Sources cannot be listed. Install pipewire-bin, and run the bridge as the signed-in ' +
-          'desktop user: a system service cannot reach the desktop PipeWire session.',
-      });
-    } else {
-      let streams = 0;
-      let sinks = 0;
-      try {
-        for (const node of parsePipewireDump(dump.output)) {
-          const mediaClass = node.info?.props?.['media.class'];
-          if (mediaClass === 'Stream/Output/Audio') streams++;
-          else if (mediaClass === 'Audio/Sink') sinks++;
-        }
-      } catch {
-        // Fall through to the counts we have; a malformed graph is reported as zero of each.
-      }
-      checks.push({
-        id: 'pipewire-dump',
-        label: 'PipeWire graph',
-        status: sinks === 0 ? 'warn' : 'ok',
-        detail: `${streams} application stream${streams === 1 ? '' : 's'}, ${sinks} output device${sinks === 1 ? '' : 's'}`,
-        ...(sinks === 0
-          ? { remedy: 'No output devices are visible. Check that PipeWire and WirePlumber are running for this user.' }
-          : streams === 0
-            ? { remedy: 'Applications appear only while they are actually playing audio. Start playback, then refresh.' }
-            : {}),
-      });
-    }
-  }
+  const dotnet = probe('dotnet', ['--version']);
+  const major = Number.parseInt(dotnet.firstLine.split('.')[0] ?? '', 10);
+  const bundled = backend === 'wasapi';
+  checks.push(
+    dotnet.ok && major >= 10
+      ? { id: 'dotnet', label: '.NET SDK', status: 'ok', detail: dotnet.firstLine }
+      : {
+          id: 'dotnet',
+          label: '.NET SDK',
+          status: bundled ? 'ok' : 'warn',
+          detail: bundled
+            ? `${dotnet.ok ? dotnet.firstLine : 'not installed'} (optional; AudioTap is already built)`
+            : dotnet.ok
+              ? `${dotnet.firstLine} - too old to build AudioTap`
+              : 'not installed',
+          ...(bundled
+            ? {}
+            : {
+                remedy: 'Needed only to build AudioTap: winget install Microsoft.DotNet.SDK.10',
+                action: 'open:https://dotnet.microsoft.com/download',
+              }),
+        },
+  );
 
   const ffplay = probe(config.paths.ffplay, ['-version']);
   checks.push(

@@ -25,7 +25,7 @@ const log = logger('control');
 const webRoot = resolve(projectRoot, 'web');
 const WS_TICKET_TTL_MS = 30_000;
 // Written into the writable runtime root: the repo in development, the user state dir when
-// installed read-only under /usr/share or Program Files.
+// installed read-only under Program Files.
 
 const MIME: Record<string, string> = {
   '.html': 'text/html; charset=utf-8',

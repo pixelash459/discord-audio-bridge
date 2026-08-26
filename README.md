@@ -1,6 +1,6 @@
 # discord-audio-bridge
 
-Stream audio from **one application, device, or live mix** — Windows or Linux — into Discord voice channels,
+Stream audio from **one application, device, or live mix** on Windows into Discord voice channels,
 with the signal path kept as short and as lossless as Discord permits.
 
 [![CI](https://github.com/AshutoshChaudhary-lgtm/discord-audio-bridge/actions/workflows/ci.yml/badge.svg)](https://github.com/AshutoshChaudhary-lgtm/discord-audio-bridge/actions/workflows/ci.yml)
@@ -10,8 +10,8 @@ with the signal path kept as short and as lossless as Discord permits.
 No virtual audio cable. No "Stereo Mix". Pick an app, pick a channel, and its audio is captured as
 48 kHz float and encoded to Opus once, without an intermediate decode/re-encode stage.
 
-The full control panel runs in any modern browser; Windows development checkouts can also wrap it
-in a small WebView2 desktop shell. Slash commands cover streaming and diagnostics, while a separate
+The full control panel runs in any modern browser; development checkouts can also wrap it in a
+small WebView2 desktop shell. Slash commands cover streaming and diagnostics, while a separate
 restricted, installable dashboard provides source, destination, mute, gain, bitrate, and stop controls from a
 phone or another device on the LAN or a personal Tailscale network.
 
@@ -58,11 +58,10 @@ phone or another device on the LAN or a personal Tailscale network.
 Spotify  (or any app)
      │  renders audio
      ▼
-Windows audio engine          or   PipeWire
-     │  WASAPI per-process         │  the app's own stream node, via pw-record
-     │  loopback                   │  48 kHz / 2 ch / f32le, raw on stdout
-     ▼                             ▼
-AudioTap.exe                  (pacing happens in the bot, in src/audio/pacer.ts)
+Windows audio engine
+     │  WASAPI per-process loopback
+     ▼
+AudioTap.exe
      │  32-bit float, 48 kHz, stereo
      │  jitter buffer + silence fill + drift correction
      │  raw PCM on stdout, paced to exact real time
@@ -82,11 +81,11 @@ Every stage is deliberate:
 | Decision | Why |
 | --- | --- |
 | Per-app capture, not a virtual cable | Captures only the target app. Nothing else on the machine leaks in, the app keeps playing to your speakers, and there is no extra device round trip. |
-| Request 48 kHz float from the capture | Windows: the process-loopback virtual device exposes no mix format, so AudioTap requests Discord's native rate directly. Linux: `pw-record` is pinned the same way. The bridge adds no separate resampling stage before libopus; the host audio graph supplies 48 kHz. |
+| Request 48 kHz float from the capture | The process-loopback virtual device exposes no mix format, so AudioTap requests Discord's native rate directly. The bridge adds no separate resampling stage before libopus; the host audio graph supplies 48 kHz. |
 | Float all the way into libopus | libopus encodes float natively. Going through 16-bit PCM would add a quantisation step and clip any intersample peak above 0 dBFS. |
 | `-page_duration 20000` | ffmpeg's Ogg muxer defaults to **one-second pages**. Measured here: default pages deliver the first packet at 3186 ms with 3-second gaps; 20 ms pages deliver it at 163 ms and flow continuously. Discord's player gives up after a handful of missed frames, so this is the difference between working and not. |
 | `inlineVolume: false` | Inline volume makes @discordjs/voice decode and re-encode every packet — a second lossy generation. Gain is applied to float samples before any conversion instead. |
-| Local pacing with silence fill | Both capture paths deliver *nothing at all* while the app is idle — not even silence. Without local pacing the stream dies every time you pause the music. On Windows that lives in AudioTap's PacedWriter; on Linux, in `src/audio/pacer.ts`. |
+| Local pacing with silence fill | Capture delivers *nothing at all* while the app is idle — not even silence. Without local pacing the stream dies every time you pause the music. That lives in AudioTap's PacedWriter. |
 
 ## Measured results
 
@@ -107,18 +106,16 @@ Windows 11 26200, Node 26.4, ffmpeg 8.1.2, tapping an `ffplay` process rendering
 
 ## Requirements
 
-| | Windows | Linux |
-| --- | --- | --- |
-| OS | Windows 10 version 2004 / build 19041+ | A Linux desktop session running PipeWire |
-| Node.js 22.18+ | only for running from source | only for running from source |
-| ffmpeg with libopus | required | required (`apt install ffmpeg` / `dnf install ffmpeg-free`) |
-| .NET 10 SDK | only for building AudioTap and the optional desktop shell from source; packaged AudioTap is self-contained | not needed |
-| PipeWire tools | — | `pipewire-bin` on Debian/Ubuntu or `pipewire-utils` on Fedora (`pw-record` and `pw-dump`) |
-| WebView2 runtime | only for `npm run app`; `npm start` uses a browser | not needed — use a browser |
+| | |
+| --- | --- |
+| OS | Windows 10 version 2004 / build 19041+ |
+| Node.js 22.18+ | only for running from source |
+| ffmpeg with libopus | required |
+| .NET 10 SDK | only for building AudioTap and the optional desktop shell from source; packaged AudioTap is self-contained |
+| WebView2 runtime | only for `npm run app`; `npm start` uses a browser |
 
 Packaged artifacts embed Node and do not need a system Node installation. The Windows ZIP also
-contains a self-contained AudioTap helper; ffmpeg remains an external runtime dependency on both
-platforms, and Linux capture still uses the host's PipeWire session and tools.
+contains a self-contained AudioTap helper; ffmpeg remains an external runtime dependency.
 
 ## Install
 
@@ -129,28 +126,11 @@ release workflow completes. Artifact names use the package version in place of `
 | File | Platform |
 | --- | --- |
 | `discord-audio-bridge-<version>-windows-amd64.zip` | Windows x64 — unzip anywhere and run `discord-audio-bridge.exe` |
-| `discord-audio-bridge-<version>-linux-amd64.deb` / `…-arm64.deb` | Debian, Ubuntu, Mint — install the file, then open **Discord Audio Bridge** from Applications |
-| `discord-audio-bridge-<version>-linux-amd64.rpm` / `…-arm64.rpm` | RPM distributions — install the file, then open **Discord Audio Bridge** from Applications |
-| `discord-audio-bridge-<version>-linux-amd64.AppImage` / `…-arm64.AppImage` | Portable AppImage — make it executable once, then double-click it |
-| `discord-audio-bridge-<version>-linux-amd64.tar.gz` / `…-arm64.tar.gz` | Portable archive — extract and run `discord-audio-bridge` |
-
-The Linux DEB and RPM install an Applications-menu entry. Opening it starts the bridge and launches
-the authenticated local control panel in the default browser; opening it again reuses the running
-bridge instead of starting another bot or audio-tap process. The AppImage provides the same launch
-behavior. Use **Setup → Quit app** to stop the background bridge without a terminal.
-
-On Linux, packaged installs optionally read `/etc/discord-audio-bridge/env`; per-user settings and
-runtime state live under `$XDG_STATE_HOME/discord-audio-bridge/` when set, otherwise
-`~/.local/state/discord-audio-bridge/`. Environment
-variables take precedence over both files. See [docs/cross-platform.md](docs/cross-platform.md) for
-the package layouts and a Linux VM validation checklist.
 
 `discord-audio-bridge --doctor` prints a full dependency report and the capturable sources;
 `--version` prints the build.
 
 ## Quick start
-
-### Windows development checkout
 
 ```powershell
 git clone https://github.com/AshutoshChaudhary-lgtm/discord-audio-bridge
@@ -159,28 +139,9 @@ npm run setup     # checks prerequisites, installs packages, builds AudioTap and
 npm run app       # launch the desktop control panel
 ```
 
-### Linux development checkout
-
-There is no native project to build on Linux: capture uses the host's `pw-record` and `pw-dump`.
-Install Node 22.18+, ffmpeg, and the PipeWire tools first, then:
-
-```bash
-git clone https://github.com/AshutoshChaudhary-lgtm/discord-audio-bridge
-cd discord-audio-bridge
-npm ci
-cp .env.example .env
-npm run doctor
-npm start
-```
-
-On Debian/Ubuntu, the PipeWire commands are in `pipewire-bin`; on Fedora they are in
-`pipewire-utils`. Run the bot as the desktop user whose PipeWire session owns the audio streams.
-`sudo`, a headless SSH login, or a VM with no active PipeWire session can make `pw-dump` appear empty.
-
-On Windows, `npm run setup` is safe to re-run and never overwrites an existing `.env`.
-
-`npm start` prints a tokenized URL for the full local panel on either OS. The `npm run app` desktop
-wrapper is Windows-only.
+`npm run setup` is safe to re-run and never overwrites an existing `.env`.
+`npm start` prints a tokenized URL for the full local panel; `npm run app` wraps the same page in a
+WebView2 window.
 
 ### Creating the Discord application
 
@@ -203,12 +164,11 @@ instantly instead of taking up to an hour to propagate globally.
 
 ## The control panel
 
-Three tabs, served by the bot on `127.0.0.1`. Packaged Linux launchers open the authenticated URL
-automatically. Source checkouts print it in the terminal; on Windows, `npm run app` wraps the same
-page in a native WebView2 window.
+Three tabs, served by the bot on `127.0.0.1`. Source checkouts print the URL in the terminal;
+`npm run app` wraps the same page in a native WebView2 window.
 
 **Stream** — first pick a server and voice channel, then choose an application, output device, or
-(on Windows) DirectShow input. The app list shows processes that currently hold an audio session,
+DirectShow input. The app list shows processes that currently hold an audio session,
 with native application icons and a pulse next to active ones. Enable mixing to select up to four
 compatible application/device sources and trim each input separately. Nothing changes in Discord until **Start stream** (or **Apply
 route**) is pressed, so exploring the list cannot accidentally retarget a live stream.
@@ -223,9 +183,9 @@ destination card can also raise a voice channel to the server's bitrate ceiling 
 **Setup** — credentials, audio/loudness defaults, presence, automation, paths, logging, and
 remote-control settings, written to the
 writable runtime `.env` (the checkout root during development, the per-user state directory for a
-read-only package). It can build AudioTap on Windows, register slash commands directly with Discord,
+read-only package). It can build AudioTap, register slash commands directly with Discord,
 and run diagnostics. Settings that only apply at startup are marked as requiring a restart; use
-**Quit app**, then reopen **Discord Audio Bridge** from Applications to apply them.
+**Quit app**, then reopen the desktop shell or restart the bot to apply them.
 
 **Logs** — the bot's log, live, filterable by level, with history from before you opened the panel.
 **Copy support report** makes one paste-ready text file from platform diagnostics and all recent log
@@ -234,13 +194,11 @@ saved credentials and the logger redacts known token forms, but review it before
 The same entries persist as JSON Lines at the configured `LOG_FILE` (by default
 `logs/bridge.log` under the runtime root):
 
-- Linux packages: `~/.local/state/discord-audio-bridge/logs/bridge.log` (or beneath
-  `$XDG_STATE_HOME` when set).
-- Windows: `logs\bridge.log` beside the unpacked app when that folder is writable, otherwise
+- Packaged install: `logs\bridge.log` beside the unpacked app when that folder is writable, otherwise
   `%APPDATA%\discord-audio-bridge\logs\bridge.log`.
 - Source checkouts: `logs/bridge.log` in the checkout.
 
-The Logs tab shows the exact active path. The Windows desktop shell also writes early launcher
+The Logs tab shows the exact active path. The desktop shell also writes early launcher
 failures to `logs/desktop.log` beside the unpacked app. Credentials are redacted before logging.
 
 ### Remote control
@@ -268,7 +226,7 @@ Windows may show a firewall prompt for Node on first use. Allow private networks
 open the URL containing the host's `100.x.y.z` address. If an inbound firewall rule is needed, add
 one for TCP port 8788 on private networks from an elevated Windows Terminal.
 
-On Windows, the optional desktop window closes to the notification area. Its tray icon reflects
+The optional desktop window closes to the notification area. Its tray icon reflects
 offline/idle/live/muted state, its menu exposes mute and stop, `Ctrl+Alt+M` / `Ctrl+Alt+S` work
 globally, and Start with Windows is opt-in. Quit from the tray to stop the bot it launched. If
 `npm start` already serves the local port, `npm run app` attaches instead of starting another bot.
@@ -289,16 +247,16 @@ is set. Set `CONTROL_PORT=0` to disable the panel entirely. See [SECURITY.md](SE
 
 | Command | What it does |
 | --- | --- |
-| `/stream app <target>` | Capture one application. Autocompletes from apps holding an audio session. On Windows, `invert: true` captures everything *except* that app; PipeWire does not support exclusion mode. |
+| `/stream app <target>` | Capture one application. Autocompletes from apps holding an audio session. `invert: true` captures everything *except* that app. |
 | `/stream device [target]` | Capture everything playing through one output device. |
-| `/stream dshow <target>` | Windows-only DirectShow input. Needs no AudioTap helper; see [why a cable is second best](#why-a-virtual-cable-sounds-flat--and-why-this-doesnt). |
+| `/stream dshow <target>` | DirectShow input. Needs no AudioTap helper; see [why a cable is second best](#why-a-virtual-cable-sounds-flat--and-why-this-doesnt). |
 | `/stop` | Stop and leave. |
 | `/status` | Live pipeline numbers. |
 | `/gain <db>` | Adjust capture gain. Applied live, no restart. |
 | `/loudness <mode>` | Switch between off, true-peak limiting, and loudness matching. |
 | `/bitrate [kbps]` | Re-encode at a different bitrate. Empty = match the channel. |
 | `/quality [maximize]` | Show the channel's bitrate and the server's ceiling; optionally raise it. |
-| `/sources` | List capturable apps and output devices, plus DirectShow inputs on Windows. |
+| `/sources` | List capturable apps, output devices, and DirectShow inputs. |
 | `/diagnose` | Full dependency report. |
 
 Commands ship as administrator-only and enforce the same check at runtime, including autocomplete
@@ -377,12 +335,11 @@ resampling if rates disagree, and any strip EQ, gate, or compressor left enabled
 
 The Discord token and application ID are required before the bot can sign in. The Setup tab manages
 the common credentials, audio defaults, paths, logging, control ports, and Tailscale trust setting;
-advanced keys such as `PWRECORD_PATH`, `PWDUMP_PATH`, `REMOTE_TOKEN`, and `CONTROL_OPEN` can be set
+advanced keys such as `REMOTE_TOKEN` and `CONTROL_OPEN` can be set
 directly in the environment file. See [`.env.example`](.env.example).
 
-Precedence is: real process environment, writable runtime `.env`, checkout `.env`, then (on Linux)
-`/etc/discord-audio-bridge/env`. A development checkout normally uses its own directory as the
-runtime root, so it has only one `.env`.
+Precedence is: real process environment, writable runtime `.env`, then checkout `.env`. A development
+checkout normally uses its own directory as the runtime root, so it has only one `.env`.
 
 | Variable | Default | Notes |
 | --- | --- | --- |
@@ -409,10 +366,8 @@ runtime root, so it has only one `.env`.
 | `REMOTE_TRUST_TAILSCALE` | `false` | Opt in to tokenless peers after `tailscale whois --json` verifies tailnet membership. |
 | `REMOTE_TOKEN` | generated | Optional fixed 24–256 character token-safe secret; normally use `.remote-token` generated by the app. |
 | `FFMPEG_PATH` | `ffmpeg` | |
-| `AUDIOTAP_PATH` | auto | Windows capture helper. |
+| `AUDIOTAP_PATH` | auto | Capture helper. |
 | `FFPLAY_PATH` | `ffplay` | Player for the Monitor button. Ships with a full ffmpeg build. |
-| `PWRECORD_PATH` | `pw-record` | Linux capture tool. |
-| `PWDUMP_PATH` | `pw-dump` | Linux source enumeration. |
 | `LOG_LEVEL` | `info` | `debug` prints the exact ffmpeg command line and every tap event. |
 | `LOG_FILE` | `logs/bridge.log` | Asynchronous JSON-lines log inside the runtime root; `off` disables it. Rotates continuously at 10 MiB. |
 
@@ -420,8 +375,7 @@ runtime root, so it has only one `.env`.
 
 ```text
 src/                 The bot. TypeScript, run directly by Node in a checkout.
-  audio/             AudioTap wrapper (Windows), the PipeWire tap + pacer (Linux),
-                     and the ffmpeg/libopus encoder.
+  audio/             AudioTap wrapper and the ffmpeg/libopus encoder.
   voice/             One BridgeSession per guild: capture + encoder + voice connection.
   control/           Loopback HTTP + WebSocket API.
   commands.ts        Slash commands, sharing their plumbing with the control API.
@@ -429,15 +383,13 @@ src/                 The bot. TypeScript, run directly by Node in a checkout.
 web/                 The control panel. Plain HTML/CSS/ES modules, no bundler.
 remote/              Restricted LAN/Tailscale dashboard. Plain HTML/CSS/JS.
 
-native/AudioTap/     C#. Per-process WASAPI capture (Windows only).
-desktop/BridgeApp/   C#. Framework-dependent WinForms + WebView2 shell and tray icon (Windows only).
-desktop/TauriApp/    Rust + Tauri 2. Cross-platform desktop shell (Windows and Linux): window,
-                     tray, global hotkeys, and single-instance launch around the same control
-                     panel. See desktop/TauriApp/README.md.
+native/AudioTap/     C#. Per-process WASAPI capture.
+desktop/BridgeApp/   C#. Framework-dependent WinForms + WebView2 shell and tray icon.
+desktop/TauriApp/    Rust + Tauri 2 desktop shell: window, tray, global hotkeys, and
+                     single-instance launch around the same control panel.
+                     See desktop/TauriApp/README.md.
 
-scripts/             Build, package, and setup tooling. package.mjs produces every release
-                     artifact; see docs/cross-platform.md for how the sausage is made.
-packaging/           deb/rpm/AppImage metadata, desktop entry, and the icon.
+scripts/             Build, package, and setup tooling.
 ```
 
 ### AudioTap
@@ -473,21 +425,12 @@ and a browser.
 Run `npm run doctor` first (or `discord-audio-bridge --doctor` on a packaged install). It reports
 every dependency, the host's audio devices, and which apps are currently capturable.
 
-**Per-app capture is unavailable (Windows).** Run `npm run build:native`. If it reports no .NET
+**Per-app capture is unavailable.** Run `npm run build:native`. If it reports no .NET
 SDK, install it or use a DirectShow source.
 
-**Per-app capture is unavailable (Linux).** Install the PipeWire tools with
-`apt install pipewire-bin` on Debian/Ubuntu or `dnf install pipewire-utils` on Fedora. Run as the
-desktop-session user, then confirm `pw-record --version` and `pw-dump --help` work.
-
-**Activation fails with `E_NOTIMPL` or `AUDCLNT_E_…` (Windows).** Per-process loopback needs
+**Activation fails with `E_NOTIMPL` or `AUDCLNT_E_…`.** Per-process loopback needs
 Windows 10 version 2004 (build 19041) or newer — check with `winver`. Some virtualised and remote-desktop audio
 stacks do not implement it.
-
-**Nothing capturable on Linux even though audio is playing.** Run `pw-dump` as the same desktop user
-and check that it lists the app as a `Stream/Output/Audio` node. PulseAudio-compatibility streams
-normally still appear. A headless VM, `sudo`, an SSH session without the desktop user's runtime
-environment, or sandbox confinement can prevent access to the active PipeWire instance.
 
 **Silence, but packets are flowing.** The app is rendering to a different endpoint than you think,
 or is genuinely idle. `npm run doctor` shows a live peak level per process.
@@ -499,11 +442,11 @@ the network.
 permission on that specific channel. Stage channels additionally need **Mute Members** so the bot
 can unsuppress itself and become a speaker.
 
-**Several AudioTap or `pw-record` processes keep appearing.** One resident AudioTap monitor plus one
-AudioTap/`pw-record` capture per active mix input is expected. The bridge retries a failed capture
+**Several AudioTap processes keep appearing.** One resident AudioTap monitor plus one
+AudioTap capture per active mix input is expected. The bridge retries a failed capture
 with bounded backoff and gives up after five attempts unless the pipeline remains healthy for 30
 seconds. Current capture children are tracked and stopped during stream replacement and shutdown.
-Source refreshes use the resident monitor on Windows and coalesced enumeration on Linux. Counts that
+Source refreshes use the resident monitor. Counts that
 keep growing while no routes change indicate a crash loop; inspect Logs/Diagnostics rather than
 ending helpers manually.
 
@@ -542,8 +485,6 @@ captures whatever you point it at; deciding what that should be is your call.
 - [Node.js built-in TypeScript support](https://nodejs.org/api/typescript.html)
 - [Tailscale CLI `whois`](https://tailscale.com/docs/reference/tailscale-cli#whois)
 - [OWASP WebSocket Security Cheat Sheet](https://cheatsheetseries.owasp.org/cheatsheets/WebSocket_Security_Cheat_Sheet.html)
-- [Ubuntu `pipewire-bin` file list](https://packages.ubuntu.com/noble/all/pipewire-bin/filelist)
-- [Fedora `pipewire-utils`](https://packages.fedoraproject.org/pkgs/pipewire/pipewire-utils/)
 
 ## License
 

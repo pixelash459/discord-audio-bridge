@@ -63,10 +63,8 @@ the Setup tab can update the runtime `.env`, build AudioTap on Windows, register
 Discord, and trigger sign-in. Anyone who can reach the loopback API with `.control-token` can perform
 those actions, so treat the token as a credential.
 
-**Capture is output-only by construction.** On Windows, AudioTap captures the selected application
-or render endpoint and takes no network action. On Linux, application capture targets an explicit
-PipeWire output-stream node and device capture resolves to a sink monitor; the bridge never launches
-a bare `pw-record` command that could default to the microphone.
+**Capture is output-only by construction.** AudioTap captures the selected application or render
+endpoint and takes no network action. It never opens a microphone capture path.
 
 **Slash commands are administrator-only by default and at runtime.** This includes autocomplete and
 message-component controls because they can enumerate or capture host applications. Server owners

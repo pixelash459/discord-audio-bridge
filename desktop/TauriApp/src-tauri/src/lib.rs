@@ -77,7 +77,7 @@ pub fn run() {
         .expect("error while building tauri application")
         .run(|app, event| {
             // On Windows the kill-on-close job object already covers a crashed shell; this
-            // is the Linux equivalent for any exit path we do survive to see.
+            // Exit hook covers graceful shutdown paths we do survive to see.
             if let RunEvent::Exit = event {
                 bridge::kill_owned_child(&app);
             }

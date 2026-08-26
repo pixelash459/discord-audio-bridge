@@ -1,35 +1,30 @@
-// Packages the bot for the CURRENT platform: bundle -> single executable -> staged layouts.
+// Packages the bot for Windows: bundle -> single executable -> staged ZIP.
 //
 //   dist/stage/discord-audio-bridge/   portable layout (binary + assets side by side)
-//                                      -> windows zip, linux tar.gz, AppImage AppDir base
-//   dist/fhs/usr/...                   filesystem-hierarchy layout for deb and rpm
-//
-// Linux artifacts beyond the tarball (deb, rpm, AppImage) need nfpm / appimagetool on PATH; CI
-// installs them, and locally a missing tool is skipped with a warning rather than a failure so
-// `npm run package` remains useful for a quick local build.
-import { execFileSync, spawnSync } from 'node:child_process';
+//   dist/release/*.zip                release archive
+import { execFileSync } from 'node:child_process';
 import {
-  chmodSync,
   cpSync,
   existsSync,
   mkdirSync,
   readFileSync,
   readdirSync,
   rmSync,
-  writeFileSync,
 } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const root = fileURLToPath(new URL('..', import.meta.url));
 const dist = join(root, 'dist');
 const release = join(dist, 'release');
-const IS_WINDOWS = process.platform === 'win32';
-const ARCH_DEB = process.arch === 'x64' ? 'amd64' : process.arch === 'arm64' ? 'arm64' : process.arch;
-const ARCH_APPIMAGE = process.arch === 'x64' ? 'x86_64' : process.arch === 'arm64' ? 'aarch64' : process.arch;
 
-const { version, description } = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'));
-const name = `discord-audio-bridge-${version}-${IS_WINDOWS ? 'windows' : 'linux'}-${ARCH_DEB}`;
+if (process.platform !== 'win32') {
+  throw new Error('Packaging is Windows-only. Run npm run package on a Windows host.');
+}
+
+const ARCH = process.arch === 'x64' ? 'amd64' : process.arch;
+const { version } = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'));
+const name = `discord-audio-bridge-${version}-windows-${ARCH}`;
 
 function run(command, args, opts = {}) {
   console.log(`> ${command} ${args.join(' ')}`);
@@ -41,30 +36,27 @@ function run(command, args, opts = {}) {
 run(process.execPath, [fileURLToPath(new URL('./build-bundle.mjs', import.meta.url))]);
 run(process.execPath, [fileURLToPath(new URL('./build-sea.mjs', import.meta.url))]);
 
-const binaryName = IS_WINDOWS ? 'discord-audio-bridge.exe' : 'discord-audio-bridge';
+const binaryName = 'discord-audio-bridge.exe';
 const binary = join(dist, binaryName);
 if (!existsSync(binary)) throw new Error(`expected ${binary} to exist after the SEA build`);
 
 // Release ZIPs must work on a clean Windows installation. The development helper stays small
 // and framework-dependent, while the packaged copy embeds the .NET runtime into one executable.
-let packagedAudioTapDir;
-if (IS_WINDOWS) {
-  packagedAudioTapDir = join(dist, 'audio-tap');
-  rmSync(packagedAudioTapDir, { recursive: true, force: true });
-  run('dotnet', [
-    'publish',
-    join(root, 'native', 'AudioTap', 'AudioTap.csproj'),
-    '--configuration', 'Release',
-    '--runtime', 'win-x64',
-    '--self-contained', 'true',
-    '--output', packagedAudioTapDir,
-    '--nologo',
-    '-p:PublishSingleFile=true',
-    '-p:EnableCompressionInSingleFile=true',
-    '-p:DebugType=none',
-    '-p:GenerateDocumentationFile=false',
-  ]);
-}
+const packagedAudioTapDir = join(dist, 'audio-tap');
+rmSync(packagedAudioTapDir, { recursive: true, force: true });
+run('dotnet', [
+  'publish',
+  join(root, 'native', 'AudioTap', 'AudioTap.csproj'),
+  '--configuration', 'Release',
+  '--runtime', 'win-x64',
+  '--self-contained', 'true',
+  '--output', packagedAudioTapDir,
+  '--nologo',
+  '-p:PublishSingleFile=true',
+  '-p:EnableCompressionInSingleFile=true',
+  '-p:DebugType=none',
+  '-p:GenerateDocumentationFile=false',
+]);
 
 /* ── external node_modules tree (davey and friends) ───────────────────────── */
 
@@ -106,197 +98,23 @@ for (const pkgName of externalPackages()) {
   const pkgBin = join(nodeModulesStage, ...pkgName.split('/'), 'bin');
   if (existsSync(pkgBin)) rmSync(pkgBin, { recursive: true }); // .node packages ship CLI shims we never call
 }
-if (!IS_WINDOWS) chmodSync(join(stage, binaryName), 0o755);
 
-if (IS_WINDOWS) {
-  const audioTapDir = packagedAudioTapDir;
-  const audioTap = join(audioTapDir, 'AudioTap.exe');
-  if (!existsSync(audioTap)) {
-    throw new Error('The self-contained AudioTap publish did not produce AudioTap.exe.');
-  }
-  // PublishSingleFile normally leaves only the executable, but copy any additional runtime files
-  // the .NET SDK considers necessary rather than assuming the output shape forever.
-  for (const entry of readdirSync(audioTapDir, { withFileTypes: true })) {
-    if (entry.isFile()) cpSync(join(audioTapDir, entry.name), join(stage, entry.name));
-  }
+const audioTap = join(packagedAudioTapDir, 'AudioTap.exe');
+if (!existsSync(audioTap)) {
+  throw new Error('The self-contained AudioTap publish did not produce AudioTap.exe.');
+}
+// PublishSingleFile normally leaves only the executable, but copy any additional runtime files
+// the .NET SDK considers necessary rather than assuming the output shape forever.
+for (const entry of readdirSync(packagedAudioTapDir, { withFileTypes: true })) {
+  if (entry.isFile()) cpSync(join(packagedAudioTapDir, entry.name), join(stage, entry.name));
 }
 
-/* ── produce the platform archives ────────────────────────────────────────── */
+/* ── produce the Windows archive ──────────────────────────────────────────── */
 
 mkdirSync(release, { recursive: true });
-
-if (IS_WINDOWS) {
-  run('powershell', [
-    '-NoProfile', '-Command',
-    `Compress-Archive -Force -Path "${join(dist, 'stage', '*')}" -DestinationPath "${join(release, `${name}.zip`)}"`,
-  ]);
-} else {
-  const tar = join(release, `${name}.tar.gz`);
-  run('tar', ['-czf', tar, '-C', join(dist, 'stage'), 'discord-audio-bridge']);
-  await packageLinux();
-}
+run('powershell', [
+  '-NoProfile', '-Command',
+  `Compress-Archive -Force -Path "${join(dist, 'stage', '*')}" -DestinationPath "${join(release, `${name}.zip`)}"`,
+]);
 
 console.log(`\npackaged into ${release}`);
-
-/* ── Linux: deb, rpm, AppImage ────────────────────────────────────────────── */
-
-async function packageLinux() {
-  const fhs = join(dist, 'fhs');
-  rmSync(fhs, { recursive: true, force: true });
-  const lib = join(fhs, 'usr', 'lib', 'discord-audio-bridge');
-  const share = join(fhs, 'usr', 'share', 'discord-audio-bridge');
-  const bin = join(fhs, 'usr', 'bin');
-  const applications = join(fhs, 'usr', 'share', 'applications');
-  const metainfo = join(fhs, 'usr', 'share', 'metainfo');
-  mkdirSync(lib, { recursive: true });
-  mkdirSync(share, { recursive: true });
-  mkdirSync(bin, { recursive: true });
-  mkdirSync(applications, { recursive: true });
-  mkdirSync(metainfo, { recursive: true });
-
-  cpSync(join(stage, binaryName), join(lib, binaryName));
-  chmodSync(join(lib, binaryName), 0o755);
-  cpSync(nodeModulesStage, join(lib, 'node_modules'), { recursive: true });
-  for (const asset of ['web', 'remote', 'package.json', 'LICENSE', 'README.md']) {
-    cpSync(join(stage, asset), join(share, asset), { recursive: true });
-  }
-  const iconDir = join(fhs, 'usr', 'share', 'icons', 'hicolor', 'scalable', 'apps');
-  mkdirSync(iconDir, { recursive: true });
-  cpSync(join(root, 'packaging', 'discord-audio-bridge.svg'), join(iconDir, 'discord-audio-bridge.svg'));
-  const desktopTemplate = join(
-    root,
-    'packaging',
-    'io.github.ashutoshchaudhary_lgtm.discord-audio-bridge.desktop',
-  );
-  writeFileSync(
-    join(applications, 'io.github.ashutoshchaudhary_lgtm.discord-audio-bridge.desktop'),
-    readFileSync(desktopTemplate, 'utf8').replace(
-      /^Exec=.*$/m,
-      'Exec=/usr/bin/discord-audio-bridge --open',
-    ),
-  );
-  cpSync(
-    join(root, 'packaging', 'io.github.ashutoshchaudhary_lgtm.discord-audio-bridge.metainfo.xml'),
-    join(metainfo, 'io.github.ashutoshchaudhary_lgtm.discord-audio-bridge.appdata.xml'),
-  );
-
-  // The wrapper points the binary at its assets; everything user-writable (tokens, logs, the
-  // editable .env) lands in ~/.local/state/discord-audio-bridge via the runtime root logic.
-  writeFileSync(
-    join(bin, 'discord-audio-bridge'),
-    [
-      '#!/bin/sh',
-      'state_root="${XDG_STATE_HOME:-$HOME/.local/state}/discord-audio-bridge"',
-      'exec env BRIDGE_PROJECT_ROOT=/usr/share/discord-audio-bridge BRIDGE_RUNTIME_ROOT="$state_root" \\',
-      '  /usr/lib/discord-audio-bridge/discord-audio-bridge "$@"',
-      '',
-    ].join('\n'),
-    { mode: 0o755 },
-  );
-
-  const nfpm = process.env['NFPM_PATH'] ?? 'nfpm';
-  const hasNfpm = spawnSync(nfpm, ['--version'], { encoding: 'utf8' }).status === 0;
-  if (hasNfpm) {
-    const config = join(dist, 'nfpm.yaml');
-    writeFileSync(
-      config,
-      [
-        `name: discord-audio-bridge`,
-        `arch: ${ARCH_DEB}`,
-        `platform: linux`,
-        `version: ${version}`,
-        `section: sound`,
-        `priority: optional`,
-        `maintainer: discord-audio-bridge contributors <https://github.com/AshutoshChaudhary-lgtm/discord-audio-bridge>`,
-        `description: "${description.replaceAll('"', '\\"')}"`,
-        `vendor: discord-audio-bridge`,
-        `license: MIT`,
-        `homepage: https://github.com/AshutoshChaudhary-lgtm/discord-audio-bridge`,
-        `overrides:`,
-        `  deb:`,
-        `    depends:`,
-        `      - pipewire-bin | pipewire`,
-        `      - xdg-utils`,
-        `    recommends:`,
-        `      - ffmpeg`,
-        `  rpm:`,
-        `    depends:`,
-        `      - pipewire-utils`,
-        `      - xdg-utils`,
-        `    recommends:`,
-        `      - ffmpeg`,
-        `rpm:`,
-        `  group: Applications/Sound`,
-        `contents:`,
-        `  - src: ${join(lib, binaryName).replaceAll('\\', '/')}`,
-        `    dst: /usr/lib/discord-audio-bridge/${binaryName}`,
-        `  - src: ${join(lib, 'node_modules')}`,
-        `    dst: /usr/lib/discord-audio-bridge/node_modules`,
-        `  - src: ${join(share, 'web')}`,
-        `    dst: /usr/share/discord-audio-bridge/web`,
-        `  - src: ${join(share, 'remote')}`,
-        `    dst: /usr/share/discord-audio-bridge/remote`,
-        `  - src: ${join(share, 'package.json')}`,
-        `    dst: /usr/share/discord-audio-bridge/package.json`,
-        `  - src: ${join(share, 'LICENSE')}`,
-        `    dst: /usr/share/licenses/discord-audio-bridge/LICENSE`,
-        `  - src: ${join(share, 'README.md')}`,
-        `    dst: /usr/share/doc/discord-audio-bridge/README.md`,
-        `  - src: ${join(iconDir, 'discord-audio-bridge.svg')}`,
-        `    dst: /usr/share/icons/hicolor/scalable/apps/discord-audio-bridge.svg`,
-        `  - src: ${join(applications, 'io.github.ashutoshchaudhary_lgtm.discord-audio-bridge.desktop')}`,
-        `    dst: /usr/share/applications/io.github.ashutoshchaudhary_lgtm.discord-audio-bridge.desktop`,
-        `  - src: ${join(metainfo, 'io.github.ashutoshchaudhary_lgtm.discord-audio-bridge.appdata.xml')}`,
-        `    dst: /usr/share/metainfo/io.github.ashutoshchaudhary_lgtm.discord-audio-bridge.appdata.xml`,
-        `  - src: ${join(bin, 'discord-audio-bridge')}`,
-        `    dst: /usr/bin/discord-audio-bridge`,
-        ``,
-      ].join('\n'),
-    );
-    run(nfpm, ['package', '-f', config, '-p', 'deb', '-t', join(release, `${name}.deb`)]);
-    run(nfpm, ['package', '-f', config, '-p', 'rpm', '-t', join(release, `${name}.rpm`)]);
-  } else {
-    console.warn('nfpm not found — skipping .deb/.rpm (install: go install github.com/goreleaser/nfpm/v2/cmd/nfpm@latest)');
-  }
-
-  const appimagetool = process.env['APPIMAGETOOL_PATH'] ?? 'appimagetool';
-  const hasAppimagetool = spawnSync(appimagetool, ['--appimage-extract-and-run', '--version'], {
-    encoding: 'utf8',
-  }).status === 0;
-  if (hasAppimagetool) {
-    const appDir = join(dist, 'DiscordAudioBridge.AppDir');
-    rmSync(appDir, { recursive: true, force: true });
-    cpSync(fhs, appDir, { recursive: true });
-    // The desktop entry uses Icon=discord-audio-bridge. AppImageKit requires a matching
-    // top-level icon with that exact basename, in addition to the optional .DirIcon.
-    cpSync(join(root, 'packaging', 'icon-256.png'), join(appDir, 'discord-audio-bridge.png'));
-    cpSync(join(root, 'packaging', 'icon-256.png'), join(appDir, '.DirIcon'));
-    cpSync(
-      desktopTemplate,
-      join(appDir, 'io.github.ashutoshchaudhary_lgtm.discord-audio-bridge.desktop'),
-    );
-    writeFileSync(
-      join(appDir, 'AppRun'),
-      [
-        '#!/bin/sh',
-        'HERE="$(dirname "$(readlink -f "$0")")"',
-        'state_root="${XDG_STATE_HOME:-$HOME/.local/state}/discord-audio-bridge"',
-        'exec env BRIDGE_PROJECT_ROOT="$HERE/usr/share/discord-audio-bridge" BRIDGE_RUNTIME_ROOT="$state_root" \\',
-        '  "$HERE/usr/lib/discord-audio-bridge/discord-audio-bridge" "$@"',
-        '',
-      ].join('\n'),
-      { mode: 0o755 },
-    );
-    const runtime = process.env['APPIMAGE_RUNTIME_PATH'];
-    run(appimagetool, [
-      '--appimage-extract-and-run',
-      ...(runtime ? ['--runtime-file', runtime] : []),
-      appDir,
-      join(release, `${name}.AppImage`),
-    ], {
-      env: { ...process.env, ARCH: ARCH_APPIMAGE },
-    });
-  } else {
-    console.warn('appimagetool not found — skipping AppImage');
-  }
-}

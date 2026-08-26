@@ -152,25 +152,85 @@ jobs:
           path: dist/release/*
           if-no-files-found: error
 
+  # Installers for the Tauri desktop shell. Only on version tags so ordinary CI stays fast;
+  # main-branch builds continue to ship via the separate app-shell workflow artifacts.
+  app-shell:
+    name: App shell (Windows)
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: desktop/TauriApp
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772
+        with:
+          toolchain: stable
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '26'
+          cache: npm
+
+      - name: Build and stage the bridge payload
+        working-directory: .
+        run: |
+          npm ci --no-fund --no-audit
+          node scripts/package.mjs
+          node -e "
+            const fs = require('fs');
+            const src = 'dist/stage/discord-audio-bridge';
+            const dest = 'desktop/TauriApp/src-tauri/bridge-payload';
+            fs.rmSync(dest, { recursive: true, force: true });
+            fs.cpSync(src, dest, { recursive: true });
+            console.log(fs.readdirSync(dest).join('\n'));
+          "
+
+      - name: Install npm dependencies
+        run: npm ci
+
+      - name: Build the app shell
+        run: npx tauri build
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: discord-audio-bridge-app-windows
+          path: |
+            desktop/TauriApp/src-tauri/target/release/bundle/**/*.exe
+            desktop/TauriApp/src-tauri/target/release/bundle/**/*.msi
+          if-no-files-found: error
+
+  # Tag push (v*) publishes Windows ZIP + MSI/NSIS as a GitHub Release — the public download
+  # surface. Actions artifacts alone expire and are awkward for end users.
   release:
     name: Release
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: [check, native, package]
+    needs: [check, native, package, app-shell]
     runs-on: ubuntu-latest
     permissions:
       contents: write
     steps:
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
-          pattern: packages-*
+          name: packages-windows-x64
           path: dist/release
-          merge-multiple: true
+
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: discord-audio-bridge-app-windows
+          path: dist/app-shell
+
+      - name: Stage release assets
+        run: |
+          mkdir -p dist/release
+          find dist/app-shell -type f \( -name '*.msi' -o -name '*.exe' \) -print -exec cp -t dist/release {} +
+          ls -la dist/release/
 
       - name: Create the release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          ls -la dist/release/
           gh release create "${GITHUB_REF_NAME}" dist/release/* \
             --repo "${GITHUB_REPOSITORY}" \
             --title "discord-audio-bridge ${GITHUB_REF_NAME}" \

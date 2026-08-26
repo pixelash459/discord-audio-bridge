@@ -125,7 +125,11 @@ release workflow completes. Artifact names use the package version in place of `
 
 | File | Platform |
 | --- | --- |
-| `discord-audio-bridge-<version>-windows-amd64.zip` | Windows x64 — unzip anywhere and run `discord-audio-bridge.exe` |
+| `discord-audio-bridge-<version>-windows-amd64.zip` | Portable — unzip and run `discord-audio-bridge.exe` |
+| `Discord Audio Bridge App_<version>_x64_en-US.msi` | Installer (MSI) — desktop shell with bundled bridge |
+| `Discord Audio Bridge App_<version>_x64-setup.exe` | Installer (NSIS) — same app shell |
+
+Pushing a `v*` tag runs CI, builds those assets, and publishes them on the releases page automatically.
 
 `discord-audio-bridge --doctor` prints a full dependency report and the capturable sources;
 `--version` prints the build.

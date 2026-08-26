@@ -6,6 +6,8 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [1.5.0] - 2026-08-26
+
 ### Changed
 
 - **Windows-only going forward.** Linux/PipeWire capture support and Linux packages
@@ -13,10 +15,12 @@ All notable changes to this project are documented here. The format follows
 
 ### Added
 
+- Live Discord presence toggles on the Stream tab (under the bot / on the voice channel) that apply
+  without restarting.
 - Desktop shell in `desktop/TauriApp` (Tauri 2, Rust): a native window around the
   bridge's own control panel plus tray icon, global mute/stop/show hotkeys, single-instance
-  launch, and attach-or-start supervision of the bridge. Optional, behind its own build;
-  nothing about the bot, the browser panel, or existing Windows packaging changes.
+  launch, and attach-or-start supervision of the bridge. Tagged releases publish the Windows MSI
+  and NSIS installer alongside the portable ZIP.
 
 ## [1.4.1] - 2026-08-23
 
@@ -298,7 +302,8 @@ First release.
 - ffmpeg's Ogg muxer defaults to one-second pages, which starves the Discord player. This project
   sets `-page_duration 20000`; measured, that is 163 ms to first packet versus 3186 ms.
 
-[Unreleased]: https://github.com/AshutoshChaudhary-lgtm/discord-audio-bridge/compare/v1.4.1...HEAD
+[Unreleased]: https://github.com/AshutoshChaudhary-lgtm/discord-audio-bridge/compare/v1.5.0...HEAD
+[1.5.0]: https://github.com/AshutoshChaudhary-lgtm/discord-audio-bridge/compare/v1.4.1...v1.5.0
 [1.4.1]: https://github.com/AshutoshChaudhary-lgtm/discord-audio-bridge/compare/v1.4.0...v1.4.1
 [1.4.0]: https://github.com/AshutoshChaudhary-lgtm/discord-audio-bridge/compare/v1.3.1...v1.4.0
 [1.3.1]: https://github.com/AshutoshChaudhary-lgtm/discord-audio-bridge/compare/v1.3.0...v1.3.1

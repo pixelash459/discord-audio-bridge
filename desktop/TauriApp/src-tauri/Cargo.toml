@@ -1,6 +1,6 @@
 [package]
 name = "discord-audio-bridge-app"
-version = "0.1.0"
+version = "1.5.0"
 description = "Desktop shell for discord-audio-bridge: native window, tray, and hotkeys around the bridge control panel"
 authors = ["discord-audio-bridge contributors"]
 license = "MIT"

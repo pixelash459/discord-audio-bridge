@@ -27,7 +27,7 @@
     <!-- The shell is deliberately thin: a native window hosting the same control panel the bot
          already serves. WebView2 ships with Windows 10/11, so this adds ~1MB rather than the
          ~150MB an Electron build would. -->
-    <PackageReference Include="Microsoft.Web.WebView2" Version="1.0.4129.50" />
+    <PackageReference Include="Microsoft.Web.WebView2" Version="1.0.4258.31" />
   </ItemGroup>
 
 </Project>
